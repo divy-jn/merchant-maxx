@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+razorpay
+litellm
+langgraph
+supabase
+pydantic-settings
+python-dotenv
