@@ -1,7 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from config import settings
-from routes import catalog
+from routes import catalog, chat
+from acp import protocol as acp_protocol
+from acp import discovery as acp_discovery
 
 app = FastAPI(
     title="Merchant Maxx API",
@@ -18,6 +20,9 @@ app.add_middleware(
 )
 
 app.include_router(catalog.router)
+app.include_router(chat.router)
+app.include_router(acp_protocol.router)
+app.include_router(acp_discovery.router)
 
 @app.get("/")
 async def root():
