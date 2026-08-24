@@ -1,0 +1,81 @@
+.audit-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.audit-header h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  color: white;
+}
+
+.audit-header p {
+  color: var(--text-muted);
+  margin-top: 0.5rem;
+}
+
+.audit-table-wrapper {
+  overflow-x: auto;
+}
+
+.audit-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.audit-table th, .audit-table td {
+  padding: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.audit-table th {
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.audit-table tbody tr {
+  transition: background 0.2s ease;
+}
+
+.audit-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.status-approved {
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--success);
+}
+
+.status-rejected {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--danger);
+}
+
+.status-pending {
+  background: rgba(245, 158, 11, 0.1);
+  color: var(--warning);
+}
+
+.risk-score {
+  font-family: monospace;
+  font-weight: 600;
+}
+
+.risk-low { color: var(--success); }
+.risk-med { color: var(--warning); }
+.risk-high { color: var(--danger); }
