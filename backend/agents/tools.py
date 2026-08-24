@@ -1,5 +1,6 @@
 from langchain_core.tools import tool
 from razorpay_service import items, orders, payment_links
+from agents.guardian import validate_action, GuardianException
 import logging
 
 logger = logging.getLogger(__name__)
@@ -30,10 +31,24 @@ def get_product_details(item_id: str):
         return f"Error fetching product details: {str(e)}"
 
 @tool
-def create_payment_link_for_product(item_id: str, customer_email: str = None, customer_contact: str = None):
-    """Generates a payment link to purchase a specific product."""
+def create_payment_link_for_product(item_id: str, user_confirmed: bool = False, customer_email: str = None, customer_contact: str = None):
+    """Generates a payment link to purchase a specific product. MUST pass user_confirmed=True if the user has explicitly agreed to buy."""
     try:
         item = items.fetch_item(item_id)
+        
+        # Guardian Validation
+        action_intent = {
+            "description": f"Create payment link for {item['name']}",
+            "user_confirmed": user_confirmed
+        }
+        # This will raise an exception if Guardian rejects it
+        validate_action(
+            agent_name="Closer",
+            action_type="create_payment_link",
+            action_intent=action_intent,
+            amount_paise=item["amount"]
+        )
+        
         customer = {}
         if customer_email: customer["email"] = customer_email
         if customer_contact: customer["contact"] = customer_contact
@@ -44,6 +59,8 @@ def create_payment_link_for_product(item_id: str, customer_email: str = None, cu
             customer=customer if customer else None
         )
         return f"Payment Link Created Successfully!\nLink: {plink['short_url']}\nAmount: ₹{plink['amount']/100}"
+    except GuardianException as ge:
+        return f"Action Blocked by Guardian: {str(ge)}"
     except Exception as e:
         return f"Error creating payment link: {str(e)}"
 
