@@ -46,3 +46,7 @@ dist-ssr/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local Planning Docs (Do not track)
+docs/
+CONTEXT.md
