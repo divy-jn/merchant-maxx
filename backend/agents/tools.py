@@ -14,10 +14,16 @@ def search_catalog(query: str, limit: int = 5):
         q = query.lower()
         for item in all_items:
             if q in item.get('name', '').lower() or q in item.get('description', '').lower():
-                results.append(f"ID: {item['id']} | Name: {item['name']} | Price: ₹{item['amount']/100}")
+                price = item['amount'] / 100
+                results.append(
+                    f"Product: {item['name']}\n"
+                    f"  Price: Rs.{price:,.2f}\n"
+                    f"  Description: {item.get('description', 'N/A')}\n"
+                    f"  Product ID: {item['id']}"
+                )
             if len(results) >= limit:
                 break
-        return "\n".join(results) if results else "No items found."
+        return "\n---\n".join(results) if results else "No matching products found in our catalog."
     except Exception as e:
         return f"Error searching catalog: {str(e)}"
 
@@ -26,13 +32,20 @@ def get_product_details(item_id: str):
     """Get full details of a specific product by its ID."""
     try:
         item = items.fetch_item(item_id)
-        return f"ID: {item['id']}\nName: {item['name']}\nDescription: {item.get('description', '')}\nPrice: ₹{item['amount']/100}"
+        price = item['amount'] / 100
+        return (
+            f"Product: {item['name']}\n"
+            f"Price: Rs.{price:,.2f}\n"
+            f"Description: {item.get('description', 'N/A')}\n"
+            f"Product ID: {item['id']}\n"
+            f"Status: {'Available' if item.get('active', True) else 'Unavailable'}"
+        )
     except Exception as e:
         return f"Error fetching product details: {str(e)}"
 
 @tool
 def create_payment_link_for_product(item_id: str, user_confirmed: bool = False, customer_email: str = None, customer_contact: str = None):
-    """Generates a payment link to purchase a specific product. MUST pass user_confirmed=True if the user has explicitly agreed to buy."""
+    """Creates a Razorpay payment link for a product. MUST set user_confirmed=True only when the user has explicitly said yes/confirm/go ahead."""
     try:
         item = items.fetch_item(item_id)
         
@@ -41,7 +54,6 @@ def create_payment_link_for_product(item_id: str, user_confirmed: bool = False, 
             "description": f"Create payment link for {item['name']}",
             "user_confirmed": user_confirmed
         }
-        # This will raise an exception if Guardian rejects it
         validate_action(
             agent_name="Closer",
             action_type="create_payment_link",
@@ -58,11 +70,23 @@ def create_payment_link_for_product(item_id: str, user_confirmed: bool = False, 
             description=f"Purchase of {item['name']}",
             customer=customer if customer else None
         )
-        return f"Payment Link Created Successfully!\nLink: {plink['short_url']}\nAmount: ₹{plink['amount']/100}"
+        price = plink['amount'] / 100
+        return (
+            f"Payment link created!\n"
+            f"Product: {item['name']}\n"
+            f"Amount: Rs.{price:,.2f}\n"
+            f"Pay here: {plink['short_url']}"
+        )
     except GuardianException as ge:
-        return f"Action Blocked by Guardian: {str(ge)}"
+        return f"Payment blocked: User confirmation is required before creating a payment link. Please ask the user to confirm."
     except Exception as e:
         return f"Error creating payment link: {str(e)}"
 
-# A combined list of all tools
+# Discovery tools (for Scout)
+DISCOVERY_TOOLS = [search_catalog, get_product_details]
+
+# Payment tools (for Closer)
+PAYMENT_TOOLS = [create_payment_link_for_product]
+
+# All tools combined (for ToolNode execution)
 ALL_TOOLS = [search_catalog, get_product_details, create_payment_link_for_product]
