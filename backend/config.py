@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     # LLM Settings
     LLM_PROVIDER: str = "gemini"
-    LLM_MODEL: str = "gemini-2.0-flash"
+    LLM_MODEL: str = "gemini-3.6-flash"
     LLM_API_KEY: str = ""
     LLM_BASE_URL: str | None = None
 

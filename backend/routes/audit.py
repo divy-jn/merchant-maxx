@@ -17,6 +17,9 @@ async def get_audit_logs(limit: int = 50):
         response = supabase.table("audit_log").select("*").order("timestamp", desc=True).limit(limit).execute()
         return response.data
     except Exception as e:
+        if 'PGRST205' in str(e):
+            logger.warning("Audit table not found, returning empty logs.")
+            return []
         logger.error(f"Error fetching audit logs: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 

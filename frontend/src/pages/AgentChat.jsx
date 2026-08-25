@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send } from 'lucide-react';
+import { Send, Trash2 } from 'lucide-react';
 import './AgentChat.css';
 
-export default function AgentChat() {
+export default function AgentChat({ sessionId = 'guest' }) {
   const [messages, setMessages] = useState([
-    { sender: 'bot', text: 'Hi! I am MAXX, your AI Commerce Orchestrator. Looking for a product, or want me to create a payment link for something?' }
+    { sender: 'bot', text: 'Hi! I\'m MAXX, your AI shopping assistant at Merchant Maxx. I can help you discover products, compare options, and complete purchases. What are you looking for today?' }
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -18,6 +18,21 @@ export default function AgentChat() {
     scrollToBottom();
   }, [messages]);
 
+  // Load chat history on mount
+  useEffect(() => {
+    fetch(`http://localhost:8002/chat/history?session_id=${sessionId}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.length > 0) {
+          setMessages([
+            { sender: 'bot', text: 'Hi! I\'m MAXX, your AI shopping assistant at Merchant Maxx. I can help you discover products, compare options, and complete purchases. What are you looking for today?' },
+            ...data
+          ]);
+        }
+      })
+      .catch(() => {}); // Silently fail if no history
+  }, [sessionId]);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!input.trim() || loading) return;
@@ -28,22 +43,28 @@ export default function AgentChat() {
     setLoading(true);
 
     try {
-      const res = await fetch('http://localhost:8000/chat/', {
+      const res = await fetch('http://localhost:8002/chat/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMessage })
+        body: JSON.stringify({ message: userMessage, session_id: sessionId })
       });
       
       const data = await res.json();
-      setMessages(prev => [...prev, { sender: 'bot', text: data.response || 'Sorry, I encountered an error.' }]);
+      setMessages(prev => [...prev, { sender: 'bot', text: data.response || 'Sorry, something went wrong.' }]);
     } catch (err) {
-      setMessages(prev => [...prev, { sender: 'bot', text: 'Error connecting to the agent backend.' }]);
+      setMessages(prev => [...prev, { sender: 'bot', text: 'Connection error. Please try again.' }]);
     } finally {
       setLoading(false);
     }
   };
 
-  // Helper to safely render text with potential URLs
+  const clearChat = async () => {
+    await fetch(`http://localhost:8002/chat/history?session_id=${sessionId}`, { method: 'DELETE' });
+    setMessages([
+      { sender: 'bot', text: 'Hi! I\'m MAXX, your AI shopping assistant at Merchant Maxx. What are you looking for today?' }
+    ]);
+  };
+
   const renderMessageText = (text) => {
     const urlRegex = /(https?:\/\/[^\s]+)/g;
     return text.split(urlRegex).map((part, i) => {
@@ -57,8 +78,16 @@ export default function AgentChat() {
   return (
     <div className="chat-container animate-fade-in">
       <div className="chat-header">
-        <h1>Agent Chat</h1>
-        <p>Talk to MAXX, Scout, and Closer to discover and buy products.</p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h1>Chat with MAXX</h1>
+            <p>Your AI-powered shopping assistant</p>
+          </div>
+          <button className="btn btn-outline" onClick={clearChat} style={{ padding: '0.5rem 1rem', fontSize: '0.875rem' }}>
+            <Trash2 size={16} />
+            Clear Chat
+          </button>
+        </div>
       </div>
 
       <div className="chat-box glass-panel">
@@ -66,6 +95,7 @@ export default function AgentChat() {
           {messages.map((msg, idx) => (
             <div key={idx} className={`message-item ${msg.sender}`}>
               <div className="message-bubble">
+                {msg.sender === 'bot' && <span className="agent-label">MAXX</span>}
                 {renderMessageText(msg.text)}
               </div>
             </div>
@@ -83,7 +113,7 @@ export default function AgentChat() {
             <input 
               type="text" 
               className="chat-input"
-              placeholder="E.g., I want to buy a gaming keyboard..."
+              placeholder="Ask MAXX anything about our products..."
               value={input}
               onChange={(e) => setInput(e.target.value)}
               disabled={loading}
