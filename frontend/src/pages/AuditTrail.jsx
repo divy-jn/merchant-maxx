@@ -8,7 +8,7 @@ export default function AuditTrail() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    fetch('http://localhost:8000/audit/')
+    fetch('http://localhost:8002/audit/')
       .then(res => {
         if (!res.ok) throw new Error('Failed to fetch audit logs');
         return res.json();

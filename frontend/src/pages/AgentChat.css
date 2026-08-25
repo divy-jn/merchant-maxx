@@ -72,6 +72,16 @@
   border-bottom-left-radius: 4px;
 }
 
+.agent-label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--primary);
+  margin-bottom: 0.25rem;
+}
+
 .message-bubble a {
   color: #7DD3FC;
   text-decoration: underline;

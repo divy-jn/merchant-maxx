@@ -8,7 +8,7 @@ export default function Catalog() {
 
   useEffect(() => {
     // Fetch products from our backend
-    fetch('http://localhost:8000/catalog/')
+    fetch('http://localhost:8002/catalog/')
       .then(res => {
         if (!res.ok) throw new Error('Failed to fetch catalog');
         return res.json();
