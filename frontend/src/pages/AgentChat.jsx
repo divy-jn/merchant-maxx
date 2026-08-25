@@ -66,10 +66,13 @@ export default function AgentChat({ sessionId = 'guest' }) {
   };
 
   const renderMessageText = (text) => {
-    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    // Match URLs but strip trailing punctuation that isn't part of the URL
+    const urlRegex = /(https?:\/\/[^\s\)\]\>,]+)/g;
     return text.split(urlRegex).map((part, i) => {
-      if (part.match(urlRegex)) {
-        return <a key={i} href={part} target="_blank" rel="noopener noreferrer">{part}</a>;
+      if (part.match(/^https?:\/\//)) {
+        // Clean any remaining trailing punctuation
+        const cleanUrl = part.replace(/[)}\].,;:!?]+$/, '');
+        return <a key={i} href={cleanUrl} target="_blank" rel="noopener noreferrer">{cleanUrl}</a>;
       }
       return part;
     });
