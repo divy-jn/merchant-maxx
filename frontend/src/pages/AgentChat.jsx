@@ -20,7 +20,7 @@ export default function AgentChat({ sessionId = 'guest' }) {
 
   // Load chat history on mount
   useEffect(() => {
-    fetch(`http://localhost:8002/chat/history?session_id=${sessionId}`)
+    fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8002'}/chat/history?session_id=${sessionId}`)
       .then(res => res.json())
       .then(data => {
         if (data.length > 0) {
@@ -43,7 +43,7 @@ export default function AgentChat({ sessionId = 'guest' }) {
     setLoading(true);
 
     try {
-      const res = await fetch('http://localhost:8002/chat/', {
+      const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8002'}/chat/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: userMessage, session_id: sessionId })
@@ -59,7 +59,7 @@ export default function AgentChat({ sessionId = 'guest' }) {
   };
 
   const clearChat = async () => {
-    await fetch(`http://localhost:8002/chat/history?session_id=${sessionId}`, { method: 'DELETE' });
+    await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8002'}/chat/history?session_id=${sessionId}`, { method: 'DELETE' });
     setMessages([
       { sender: 'bot', text: 'Hi! I\'m MAXX, your AI shopping assistant at Merchant Maxx. What are you looking for today?' }
     ]);
