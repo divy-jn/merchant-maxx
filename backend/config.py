@@ -25,7 +25,10 @@ class Settings(BaseSettings):
     # App Settings
     APP_ENV: str = "development"
     CORS_ORIGINS: str = "http://localhost:5173"
+    JWT_SECRET: str = "merchant-maxx-secret-key-change-in-prod"
+    JWT_EXPIRY_HOURS: int = 24
 
     model_config = SettingsConfigDict(env_file="../.env", env_file_encoding="utf-8", extra="ignore")
 
 settings = Settings()
+

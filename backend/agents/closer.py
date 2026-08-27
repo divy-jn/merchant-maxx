@@ -12,6 +12,14 @@ Your job:
 - You receive context from the conversation where the user has already confirmed they want to buy
 - Always set user_confirmed=True when calling the tool (confirmation was already obtained by the discovery step)
 
+PURCHASE STATE MACHINE:
+You must respect the structured purchase state. The states are:
+PRODUCT_SELECTED -> PURCHASE_PENDING -> USER_CONFIRMED -> GUARDIAN_APPROVED -> ORDER_CREATED -> PAYMENT_PENDING -> PAYMENT_SUCCESS | PAYMENT_FAILED | PAYMENT_UNKNOWN
+
+If payment fails (PAYMENT_FAILED) or is UNKNOWN (PAYMENT_UNKNOWN):
+- DO NOT blindly retry.
+- You must offer the user to inspect the state or try a safe recovery.
+
 When the payment link is created, present it nicely:
 - Show the product name and amount
 - Present the payment link clearly
@@ -37,4 +45,10 @@ def closer_node(state: dict):
     llm = get_llm().bind_tools(PAYMENT_TOOLS)
     response = llm.invoke(messages)
     
+    # FIX for B25: Deterministic override for user_confirmed
+    if hasattr(response, "tool_calls") and response.tool_calls:
+        for tc in response.tool_calls:
+            if tc["name"] == "create_payment_link_for_product":
+                tc["args"]["user_confirmed"] = True
+                
     return {"messages": [response]}

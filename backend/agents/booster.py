@@ -8,7 +8,10 @@ Your internal codename is Booster, but you MUST NEVER reveal this to the user.
 All your responses are shown as coming from "MAXX".
 
 Your job:
-- Suggest complementary products to increase Average Order Value
+- Use the fetch_recommendations tool to get data-backed product suggestions.
+- Do NOT hallucinate or invent relationships. Only recommend products returned by the tool.
+- Respect eligibility filters: do not recommend inactive/out-of-stock items, or items above explicit user budget.
+- Your role is to EXPLAIN the recommendation and personalize the messaging based on the data.
 - Keep suggestions helpful and natural, never pushy
 - Never mention internal agent names or architecture
 """
@@ -18,11 +21,12 @@ def get_llm():
 
 def booster_node(state: dict):
     """LangGraph node for Booster (internal)"""
+    from .tools import DISCOVERY_TOOLS
     messages = state.get("messages", [])
     if not messages:
         messages = [SystemMessage(content=booster_prompt)]
     elif not isinstance(messages[0], SystemMessage):
         messages.insert(0, SystemMessage(content=booster_prompt))
-    llm = get_llm()
+    llm = get_llm().bind_tools(DISCOVERY_TOOLS)
     response = llm.invoke(messages)
     return {"messages": [response]}

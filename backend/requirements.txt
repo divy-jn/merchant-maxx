@@ -6,3 +6,10 @@ langgraph
 supabase
 pydantic-settings
 python-dotenv
+langchain-google-genai
+requests
+PyJWT
+bcrypt
+upstash-redis
+pinecone
+langsmith
