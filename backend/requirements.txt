@@ -13,3 +13,4 @@ bcrypt
 upstash-redis
 pinecone
 langsmith
+pytest
