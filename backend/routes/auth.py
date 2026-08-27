@@ -1,96 +1,125 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel
-from typing import Optional
-import hashlib
-import uuid
-import time
+from typing import Optional, Dict, Any
+import bcrypt
+import jwt
+from datetime import datetime, timedelta
+from config import settings
+from utils.supabase_client import supabase
+from middleware.auth_middleware import get_current_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-
-# Simple in-memory user store (swap with Supabase later for production)
-users_db = {}
-sessions_db = {}
 
 class RegisterRequest(BaseModel):
     name: str
     email: str
     password: str
-    role: str = "customer"  # "customer" or "merchant"
+    role: str = "customer"
 
 class LoginRequest(BaseModel):
     email: str
     password: str
 
 class AuthResponse(BaseModel):
-    session_id: str
+    token: str
     user_id: str
     name: str
     email: str
     role: str
 
 def hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+
+def create_access_token(data: dict) -> str:
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(hours=24)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, getattr(settings, 'JWT_SECRET', '[MASKED_JWT_SECRET]'), algorithm="HS256")
+    return encoded_jwt
 
 @router.post("/register", response_model=AuthResponse)
 async def register(req: RegisterRequest):
     """Register a new user (customer or merchant)"""
-    if req.email in users_db:
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+
+    # Check if user exists
+    existing = supabase.table("users").select("id").eq("email", req.email).execute()
+    if existing.data:
         raise HTTPException(status_code=409, detail="Email already registered")
     
-    user_id = str(uuid.uuid4())[:8]
-    users_db[req.email] = {
-        "user_id": user_id,
+    user_data = {
         "name": req.name,
         "email": req.email,
         "password_hash": hash_password(req.password),
-        "role": req.role,
-        "created_at": time.time()
+        "role": req.role
     }
     
-    session_id = str(uuid.uuid4())
-    sessions_db[session_id] = {"user_id": user_id, "email": req.email, "role": req.role, "name": req.name}
+    res = supabase.table("users").insert(user_data).execute()
+    if not res.data:
+        raise HTTPException(status_code=500, detail="Failed to create user")
+        
+    user = res.data[0]
     
-    return AuthResponse(session_id=session_id, user_id=user_id, name=req.name, email=req.email, role=req.role)
+    token = create_access_token({
+        "user_id": user["id"],
+        "email": user["email"],
+        "role": user["role"],
+        "name": user["name"]
+    })
+    
+    return AuthResponse(
+        token=token, 
+        user_id=user["id"], 
+        name=user["name"], 
+        email=user["email"], 
+        role=user["role"]
+    )
 
 @router.post("/login", response_model=AuthResponse)
 async def login(req: LoginRequest):
-    """Login and get a session ID"""
-    user = users_db.get(req.email)
-    if not user or user["password_hash"] != hash_password(req.password):
+    """Login and get a JWT token"""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+
+    res = supabase.table("users").select("*").eq("email", req.email).execute()
+    if not res.data:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+        
+    user = res.data[0]
+    
+    if not verify_password(req.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     
-    session_id = str(uuid.uuid4())
-    sessions_db[session_id] = {
-        "user_id": user["user_id"], 
-        "email": user["email"], 
-        "role": user["role"], 
+    token = create_access_token({
+        "user_id": user["id"],
+        "email": user["email"],
+        "role": user["role"],
         "name": user["name"]
-    }
+    })
     
     return AuthResponse(
-        session_id=session_id, user_id=user["user_id"], 
-        name=user["name"], email=user["email"], role=user["role"]
+        token=token, 
+        user_id=user["id"], 
+        name=user["name"], 
+        email=user["email"], 
+        role=user["role"]
     )
 
 @router.get("/me")
-async def get_me(session_id: str):
-    """Get current user info from session"""
-    session = sessions_db.get(session_id)
-    if not session:
-        raise HTTPException(status_code=401, detail="Invalid or expired session")
-    return session
+async def get_me(current_user: dict = Depends(get_current_user)):
+    """Get current user info from JWT"""
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Invalid or missing session token")
+    return current_user
 
-def get_user_from_session(session_id: str) -> Optional[dict]:
-    """Helper used by other routes to validate session"""
-    return sessions_db.get(session_id)
-
-# Seed a demo user on import
-demo_id = str(uuid.uuid4())[:8]
-users_db["demo@merchantmaxx.com"] = {
-    "user_id": demo_id,
-    "name": "Demo Customer",
-    "email": "demo@merchantmaxx.com",
-    "password_hash": hash_password("demo123"),
-    "role": "customer",
-    "created_at": time.time()
-}
+def get_user_from_session(token: str) -> Optional[dict]:
+    """Helper used by other routes to validate session token manually if needed"""
+    try:
+        return jwt.decode(token, getattr(settings, 'JWT_SECRET', '[MASKED_JWT_SECRET]'), algorithms=["HS256"])
+    except:
+        return None

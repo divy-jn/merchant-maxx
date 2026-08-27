@@ -36,6 +36,26 @@ CONSTITUTIONAL_RULES = [
         id="RULE_04_NO_SELF_DEALING",
         description="Agent cannot purchase items for itself or transfer funds to unrecognized accounts.",
         severity="BLOCK"
+    ),
+    SafetyRule(
+        id="RULE_05_IDEMPOTENCY",
+        description="Duplicate action detection. Exact same action cannot be re-executed.",
+        severity="BLOCK"
+    ),
+    SafetyRule(
+        id="RULE_06_VALID_STATE",
+        description="Action must align with the current purchase state.",
+        severity="BLOCK"
+    ),
+    SafetyRule(
+        id="RULE_07_VALID_ENTITY",
+        description="Action must reference valid entities.",
+        severity="BLOCK"
+    ),
+    SafetyRule(
+        id="RULE_08_NO_BLIND_RETRY",
+        description="Do not blindly retry after FAILED/UNKNOWN payment. Must inspect state first.",
+        severity="BLOCK"
     )
 ]
 
@@ -52,6 +72,17 @@ def evaluate_safety(action_intent: dict, amount_paise: int = 0) -> Constitutiona
     if settings.GUARDIAN_REQUIRE_CONFIRMATION and not action_intent.get("user_confirmed", False):
         violations.append("RULE_02_USER_CONFIRMATION: Missing explicit user confirmation.")
         risk += 0.6
+        
+    # NEW RULE IMPLEMENTATIONS
+    state = action_intent.get("purchase_state", "")
+    
+    if action_intent.get("is_duplicate", False):
+        violations.append("RULE_05_IDEMPOTENCY: Duplicate action detected based on intent identifier.")
+        risk += 0.9
+        
+    if state == "PAYMENT_FAILED" and action_intent.get("action_type") == "retry_payment" and not action_intent.get("state_inspected", False):
+        violations.append("RULE_08_NO_BLIND_RETRY: Must inspect actual payment state before retrying after failure.")
+        risk += 1.0
         
     # In a full implementation, we would use an LLM here to evaluate RULE_03 and RULE_04
     # against the conversational context.

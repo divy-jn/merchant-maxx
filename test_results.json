@@ -1,0 +1,137 @@
+{
+  "summary": {
+    "total": 22,
+    "passed": 18,
+    "failed": 2,
+    "warned": 1
+  },
+  "bugs": [
+    {
+      "test": "POST /chat/ (no auth)",
+      "detail": "500 error: {\"detail\":\"Error embedding content (NOT_FOUND): 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/embedding-001 is not found for API version v1beta, or is not supported for embedContent. Call ",
+      "severity": "HIGH"
+    },
+    {
+      "test": "POST /chat/ (with auth)",
+      "detail": "Status 500: {\"detail\":\"Error embedding content (NOT_FOUND): 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/embedding-001 is not found for API version v1beta, or is not supported for embedContent. Call ",
+      "severity": "HIGH"
+    },
+    {
+      "test": "CORS preflight",
+      "detail": "No CORS header in response - may block frontend",
+      "severity": "HIGH"
+    }
+  ],
+  "results": [
+    {
+      "test": "GET /",
+      "status": "PASS",
+      "detail": "status=ok, msg=Merchant Maxx API is running"
+    },
+    {
+      "test": "GET /catalog/",
+      "status": "PASS",
+      "detail": "Got 10 items"
+    },
+    {
+      "test": "GET /catalog/{id}",
+      "status": "PASS",
+      "detail": "Fetched item: USB-C Hub 7-in-1"
+    },
+    {
+      "test": "GET /catalog/invalid_id (404)",
+      "status": "PASS",
+      "detail": "Correctly returns 404"
+    },
+    {
+      "test": "POST /auth/register",
+      "status": "PASS",
+      "detail": "user_id=7cde1c18-3509-4f53-9e72-1007f22a4672"
+    },
+    {
+      "test": "POST /auth/register (duplicate)",
+      "status": "PASS",
+      "detail": "Correctly rejects duplicate email"
+    },
+    {
+      "test": "POST /auth/login",
+      "status": "PASS",
+      "detail": "Got token, user_id=7cde1c18-3509-4f53-9e72-1007f22a4672"
+    },
+    {
+      "test": "POST /auth/login (wrong pw)",
+      "status": "PASS",
+      "detail": "Correctly rejects bad password"
+    },
+    {
+      "test": "GET /auth/me",
+      "status": "PASS",
+      "detail": "email=test_e2e_1787773358@test.com"
+    },
+    {
+      "test": "GET /auth/me (no token)",
+      "status": "PASS",
+      "detail": "Correctly returns 401"
+    },
+    {
+      "test": "POST /chat/ (no auth)",
+      "status": "FAIL",
+      "detail": "500 error: {\"detail\":\"Error embedding content (NOT_FOUND): 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/embedding-001 is not found for API version v1beta, or is not supported for embedContent. Call "
+    },
+    {
+      "test": "POST /chat/ (with auth)",
+      "status": "FAIL",
+      "detail": "Status 500: {\"detail\":\"Error embedding content (NOT_FOUND): 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/embedding-001 is not found for API version v1beta, or is not supported for embedContent. Call "
+    },
+    {
+      "test": "GET /chat/history?session_id=guest",
+      "status": "PASS",
+      "detail": "Returns 0 items (expected empty)"
+    },
+    {
+      "test": "GET /chat/conversations",
+      "status": "PASS",
+      "detail": "Got 1 conversations"
+    },
+    {
+      "test": "GET /audit/",
+      "status": "PASS",
+      "detail": "Got 0 audit logs"
+    },
+    {
+      "test": "GET /traces/latest (no auth)",
+      "status": "PASS",
+      "detail": "Got 5 traces"
+    },
+    {
+      "test": "GET /traces/latest (with auth)",
+      "status": "PASS",
+      "detail": "Got 5 traces"
+    },
+    {
+      "test": "GET /.well-known/agent-commerce.json",
+      "status": "PASS",
+      "detail": "merchant=Merchant Maxx (Demo), caps=2"
+    },
+    {
+      "test": "POST /acp/catalog/search",
+      "status": "PASS",
+      "detail": "Found 1 results"
+    },
+    {
+      "test": "Frontend sends session_id to /chat/",
+      "status": "PASS",
+      "detail": "Backend accepts extra fields (session_id ignored, conversation_id used)"
+    },
+    {
+      "test": "Rate limiting check",
+      "status": "INFO",
+      "detail": "Rate limiter did not kick in for 5 rapid requests"
+    },
+    {
+      "test": "CORS preflight",
+      "status": "WARN",
+      "detail": "No CORS header in response - may block frontend"
+    }
+  ]
+}
