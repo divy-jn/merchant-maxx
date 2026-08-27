@@ -129,7 +129,7 @@
 - [ ] End-to-end polish and cleanup.
 
 ## Day 6 — Architecture Refactor + Auth + Chat History (2026-08-25)
-*Status: 🟡 In Progress*
+*Status: 🟢 Complete*
 
 ### ✅ Completed
 - [x] **Architecture refactor:** MAXX is now the only customer-facing agent
@@ -142,15 +142,53 @@
 - [x] Demo user seeded automatically (`demo@merchantmaxx.com` / `demo123`)
 - [x] Added LangSmith MCP server to IDE configuration (`mcp_config.json`)
 - [x] Enabled automatic LangChain / LangGraph tracing to LangSmith project `merchant-maxx`
-
-### 📌 Next Steps (Phase 3 - Resilience)
 - [x] Fix pre-existing bugs (B20-B25)
 - [x] Implement GlobalErrorMiddleware to safely catch exceptions
 - [x] Implement RateLimitMiddleware using Upstash Redis
 
-## Day 7 — Integration Test + Demo Polish
-*Status: Not started*
+## Day 7 — Phase 3: Resilience, State Integrity & Attribution (2026-08-27)
+*Status: 🟡 In Progress*
+
+### ✅ Completed
+- [x] **`purchase_intents` table** — new Supabase table to persist authoritative purchase state across sessions (`schema.sql`)
+- [x] **Chat route overhauled** (`routes/chat.py`) — loads/saves purchase state from Supabase `purchase_intents` on every turn, ensuring server-authoritative state survives restarts
+- [x] **Webhook handler rewritten** (`routes/webhooks.py`):
+  - Idempotency checks on both `payment.captured` and `payment.failed` events
+  - Maps Razorpay Order ID → local `order_id` via `entity_mapping`
+  - Records payment in `payments` table, updates `orders.status`
+  - Revenue attribution via `purchase_intent_id` receipt → `recommendation_events` CONVERTED
+  - Failed-payment handling with `FAILED` status propagation
+- [x] **Guardian constitutional hardening** (`audit/constitutional.py`):
+  - Added `auth_intent` parameter for server-side authoritative state checks
+  - RULE_05 now checks for existing `razorpay_order_id` (real idempotency vs flag-based)
+  - RULE_07 (new): Amount-match validation — requested amount must match authoritative intent
+  - RULE_02 reads `user_confirmed` from authoritative state, not LLM state
+- [x] **Tool refactoring** (`agents/tools.py`):
+  - Scoped tool sets: `SCOUT_TOOLS`, `BOOSTER_TOOLS`, `CAMPAIGNER_TOOLS`, `PAYMENT_TOOLS`
+  - `stage_purchase_intent` no longer takes `amount_paise` — system determines price authoritatively
+  - `confirm_and_pay` removed; replaced by `check_payment_status` for FAILED/UNKNOWN recovery
+  - `create_razorpay_order` now creates local `orders`, `order_items`, and `entity_mapping` rows
+  - `fetch_recommendations` uses `lift_score > 1.0` threshold with same-category fallback
+  - `analyze_campaign_opportunities` uses correct `lifetime_value_paise` column
+- [x] **Scout agent** (`agents/scout.py`):
+  - Binds `SCOUT_TOOLS` instead of `DISCOVERY_TOOLS`
+  - Authoritatively fetches item price from Razorpay on `stage_purchase_intent` (no LLM-supplied amounts)
+  - Tracks `recommendation_id` through to basket items; updates `recommendation_events` to ACCEPTED
+- [x] **MAXX orchestrator** (`agents/maxx.py`):
+  - Compiled with `MemorySaver` checkpointer for multi-turn conversational continuity
+  - Expanded campaigner routing heuristic (`metrics`, `uplift`, `vip`, `churn`)
+  - Added `PURCHASE_PENDING` to Closer routing states
+  - Defensive `.get()` on messages to prevent KeyError
+  - Tool routing updated: `search_catalog`, `stage_purchase_intent`, `check_payment_status`, `analyze_campaign_opportunities`
+- [x] **Closer & Booster minor fixes** — updated to match new tool API signatures
+- [x] **Guardian agent** (`agents/guardian.py`) — passes `auth_intent` to constitutional evaluator
+
+### 📌 Next Steps
+- [ ] Guardian rules pass unit tests
+- [ ] **E2E Test 1**: Happy-path Razorpay Test Mode transaction
+- [ ] **E2E Test 2**: FAILED/UNKNOWN recovery scenario
+- [ ] Demo polish and final cleanup
 
 ---
 
-*Last updated: 2026-08-25*
+*Last updated: 2026-08-27*

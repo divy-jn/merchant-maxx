@@ -39,6 +39,33 @@
 - `[x]` 19. Entity mapping
 - `[x]` 20. Validation improvements (input validation in tools + chat)
 
+## Phase 3 — Resilience & State Integrity
+
+- `[x]` 21. `purchase_intents` table in schema + RLS policy
+- `[x]` 22. Chat route (`routes/chat.py`) — loads/persists authoritative purchase state from Supabase per turn
+- `[x]` 23. Webhook handler rewrite (`routes/webhooks.py`)
+  - `[x]` 23a. Idempotency checks (payment dedup)
+  - `[x]` 23b. Entity mapping lookup (Razorpay Order ID → local `order_id`)
+  - `[x]` 23c. Payment recording in `payments` table
+  - `[x]` 23d. Order status updates (COMPLETED / FAILED)
+  - `[x]` 23e. Revenue attribution via `purchase_intent_id` receipt → CONVERTED
+  - `[x]` 23f. Failed-payment handling with FAILED propagation
+- `[x]` 24. Guardian constitutional hardening (`audit/constitutional.py`)
+  - `[x]` 24a. `auth_intent` param for server-side authoritative checks
+  - `[x]` 24b. RULE_05: Real idempotency via `razorpay_order_id` existence
+  - `[x]` 24c. RULE_07 (new): Amount-match validation
+  - `[x]` 24d. RULE_02: Reads `user_confirmed` from authoritative state
+- `[x]` 25. Tool refactoring (`agents/tools.py`)
+  - `[x]` 25a. Scoped tool sets (`SCOUT_TOOLS`, `BOOSTER_TOOLS`, `CAMPAIGNER_TOOLS`, `PAYMENT_TOOLS`)
+  - `[x]` 25b. `stage_purchase_intent` — system-determined pricing (no LLM amounts)
+  - `[x]` 25c. `confirm_and_pay` removed → `check_payment_status` added
+  - `[x]` 25d. `create_razorpay_order` creates local `orders` + `order_items` + `entity_mapping`
+  - `[x]` 25e. `fetch_recommendations` — `lift_score > 1.0` threshold + category fallback
+  - `[x]` 25f. `analyze_campaign_opportunities` — correct `lifetime_value_paise` column
+- `[x]` 26. Scout agent — authoritative pricing + recommendation tracking
+- `[x]` 27. MAXX orchestrator — `MemorySaver` checkpointer + expanded routing + defensive `.get()`
+- `[x]` 28. Guardian agent — passes `auth_intent` to evaluator
+
 ## Verification
 
 - `[x]` Pipeline runs clean (exit 0)
@@ -48,3 +75,4 @@
 - `[x]` Server starts without errors
 - `[ ]` **E2E Test 1**: Happy-path Razorpay Test Mode transaction
 - `[ ]` **E2E Test 2**: FAILED/UNKNOWN recovery scenario
+
