@@ -111,18 +111,37 @@ def process_events():
 def process_item_properties():
     print("Processing RetailRocket item properties...")
     item_features = defaultdict(dict)
+    property_value_counts = defaultdict(Counter)
     
     props_files = ['item_properties_part1.csv', 'item_properties_part2.csv']
+    
+    # First pass: Count property values
     for file in props_files:
         path = os.path.join(RAW_RR_DIR, file)
         if not os.path.exists(path):
             continue
-        
-        print(f"Streaming {file}...")
+        print(f"Counting property values in {file}...")
         with open(path, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
-            # We stream to avoid OOM. Keep only last value for timestamp.
-            # In a real pipeline, we'd sort by timestamp, but for simplicity we just keep the last seen.
+            for row in reader:
+                property_value_counts[row['property']][row['value']] += 1
+
+    # Identify useful properties: non-constant, not completely unique per item
+    useful_props = set()
+    for prop, values in property_value_counts.items():
+        if len(values) > 1 and len(values) < 10000:
+            useful_props.add(prop)
+            
+    print(f"Identified {len(useful_props)} useful properties for extraction.")
+
+    # Second pass: Extract features
+    for file in props_files:
+        path = os.path.join(RAW_RR_DIR, file)
+        if not os.path.exists(path):
+            continue
+        print(f"Streaming {file} for extraction...")
+        with open(path, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
             for row in reader:
                 itemid = row['itemid']
                 prop = row['property']
@@ -136,6 +155,8 @@ def process_item_properties():
                     item_features[itemid]['price_feature'] = val
                 elif prop == '888': # multi-attribute
                     item_features[itemid]['attr_group'] = val
+                elif prop in useful_props:
+                    item_features[itemid][f'feature_{prop}'] = val
                     
     # Only keep items that actually have features
     clean_features = {k: v for k, v in item_features.items() if v}

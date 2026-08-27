@@ -12,21 +12,40 @@ def build_metrics():
     print("Building customer metrics...")
     
     orders_path = os.path.join(SYNTHETIC_DIR, 'orders.csv')
-    if not os.path.exists(orders_path):
-        print(f"Warning: {orders_path} not found.")
+    items_path = os.path.join(SYNTHETIC_DIR, 'order_items.csv')
+    products_path = os.path.join(SYNTHETIC_DIR, 'products.csv')
+    
+    if not os.path.exists(orders_path) or not os.path.exists(items_path) or not os.path.exists(products_path):
+        print("Warning: Missing required synthetic data files.")
         return
         
+    # 1. Load products to get categories
+    product_categories = {}
+    with open(products_path, 'r', encoding='utf-8') as f:
+        for row in csv.DictReader(f):
+            product_categories[row['product_id']] = row.get('category', 'Unknown')
+            
+    # 2. Load order items to link order to products
+    order_categories = defaultdict(list)
+    with open(items_path, 'r', encoding='utf-8') as f:
+        for row in csv.DictReader(f):
+            cat = product_categories.get(row['product_id'], 'Unknown')
+            order_categories[row['order_id']].append(cat)
+            
+    # 3. Load orders and build customer data
     cust_orders = defaultdict(list)
     cust_spent = defaultdict(int)
+    cust_categories = defaultdict(lambda: defaultdict(int))
     
     with open(orders_path, 'r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
         for row in reader:
             cid = row['customer_id']
-            # We only count COMPLETED orders for monetary value
             if row['status'] == 'COMPLETED':
                 cust_orders[cid].append(row['created_at'])
                 cust_spent[cid] += int(row['total_paise'])
+                for cat in order_categories.get(row['order_id'], []):
+                    cust_categories[cid][cat] += 1
                 
     metrics = []
     now = datetime.now()
@@ -44,23 +63,25 @@ def build_metrics():
         total_spent = cust_spent[cid]
         num_orders = len(dates)
         
-        # Simple frequency: orders per month since first order
         active_months = max(1, (now - first_order).days / 30.0)
         freq = num_orders / active_months
         aov = total_spent / num_orders if num_orders > 0 else 0
         
-        # Segment logic
         segment = "STANDARD"
         if num_orders > 1 and recency > 60:
             segment = "CHURN_RISK"
         elif num_orders == 1 and recency <= 30:
             segment = "NEW"
-        elif freq >= 0.5 and total_spent >= 1000000: # high spend/freq
+        elif freq >= 0.5 and total_spent >= 1000000:
             segment = "VIP"
         elif freq >= 0.2:
             segment = "REPEAT"
-        elif aov < 50000: # low aov
+        elif aov < 50000:
             segment = "PRICE_SENSITIVE"
+            
+        # Determine preferred category
+        cats = cust_categories[cid]
+        preferred_category = max(cats.items(), key=lambda x: x[1])[0] if cats else "Unknown"
             
         metrics.append({
             "customer_id": cid,
@@ -70,7 +91,7 @@ def build_metrics():
             "avg_order_value_paise": int(aov),
             "purchase_probability": round(min(1.0, freq / 2.0), 2),
             "churn_probability": round(min(1.0, recency / 100.0), 2),
-            "preferred_category": "Electronics", # Simplified
+            "preferred_category": preferred_category,
             "segment": segment,
             "calculated_at": now.isoformat()
         })

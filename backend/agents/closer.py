@@ -4,31 +4,23 @@ from config import settings
 from .tools import PAYMENT_TOOLS
 
 # Closer is INTERNAL — responses shown as MAXX
-closer_prompt = """You are an internal checkout engine for Merchant Maxx.
-All your responses are shown to the user as coming from "MAXX".
+closer_prompt = """You are MAXX, but internally you are acting as the Closer agent.
+Your job is to finalize the checkout process.
 
-Your job:
-- Generate payment links using the create_payment_link_for_product tool
-- You receive context from the conversation where the user has already confirmed they want to buy
-- Always set user_confirmed=True when calling the tool (confirmation was already obtained by the discovery step)
+FLOW:
+1. You are called when the user has selected a product and possibly seen an upsell.
+2. If the user hasn't confirmed yet, explicitly ask: "Would you like me to generate an order for you to complete the purchase?"
+3. Once the user replies "yes", "sure", or "go ahead", you MUST call the `confirm_and_pay` tool to signal their confirmation.
+4. After confirmation is staged, call the `create_razorpay_order` tool to generate the actual Razorpay order.
 
-PURCHASE STATE MACHINE:
-You must respect the structured purchase state. The states are:
-PRODUCT_SELECTED -> PURCHASE_PENDING -> USER_CONFIRMED -> GUARDIAN_APPROVED -> ORDER_CREATED -> PAYMENT_PENDING -> PAYMENT_SUCCESS | PAYMENT_FAILED | PAYMENT_UNKNOWN
+IF PAYMENT FAILED / UNKNOWN:
+- If the user wants to retry a failed payment, you MUST call the `reset_purchase_intent` tool first.
+- Only after `reset_purchase_intent` succeeds can you call `create_razorpay_order` again.
 
-If payment fails (PAYMENT_FAILED) or is UNKNOWN (PAYMENT_UNKNOWN):
-- DO NOT blindly retry.
-- You must offer the user to inspect the state or try a safe recovery.
-
-When the payment link is created, present it nicely:
-- Show the product name and amount
-- Present the payment link clearly
-- Say something like "Click the link below to complete your purchase"
-
-RULES:
-- NEVER identify yourself as "Closer" or mention internal agent names
-- Keep responses warm and reassuring
-- If the tool returns an error, apologize and suggest trying again
+CRITICAL RULES:
+- NEVER call `create_razorpay_order` directly if `confirm_and_pay` hasn't been called.
+- The `create_razorpay_order` tool will automatically use the staged product.
+- Keep responses warm and reassuring.
 """
 
 def get_llm():
@@ -45,10 +37,22 @@ def closer_node(state: dict):
     llm = get_llm().bind_tools(PAYMENT_TOOLS)
     response = llm.invoke(messages)
     
-    # FIX for B25: Deterministic override for user_confirmed
+    # Intercept tool calls to update state securely
+    state_update = {"messages": [response]}
+    
     if hasattr(response, "tool_calls") and response.tool_calls:
         for tc in response.tool_calls:
-            if tc["name"] == "create_payment_link_for_product":
-                tc["args"]["user_confirmed"] = True
+            if tc["name"] == "confirm_and_pay":
+                state_update["user_confirmed"] = True
+                state_update["purchase_state"] = "USER_CONFIRMED"
+            elif tc["name"] == "create_razorpay_order":
+                state_update["purchase_state"] = "ORDER_CREATED"
+            elif tc["name"] == "reset_purchase_intent":
+                import uuid
+                ctx = state.get("purchase_context", {})
+                if ctx:
+                    ctx["purchase_intent_id"] = f"pi_{uuid.uuid4().hex[:8]}"
+                    state_update["purchase_context"] = ctx
+                state_update["purchase_state"] = "USER_CONFIRMED"
                 
-    return {"messages": [response]}
+    return state_update

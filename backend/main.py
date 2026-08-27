@@ -5,7 +5,7 @@ load_dotenv("../.env") # Load before LangChain gets initialized
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from config import settings
-from routes import catalog, chat, audit, auth, traces
+from routes import catalog, chat, audit, auth, traces, webhooks, recommendations
 from acp import protocol as acp_protocol
 from acp import discovery as acp_discovery
 from middleware.rate_limit import RateLimitMiddleware
@@ -34,6 +34,8 @@ app.include_router(catalog.router)
 app.include_router(chat.router)
 app.include_router(audit.router)
 app.include_router(traces.router)
+app.include_router(webhooks.router)
+app.include_router(recommendations.router)
 app.include_router(acp_protocol.router)
 app.include_router(acp_discovery.router)
 

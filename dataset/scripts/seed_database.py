@@ -1,7 +1,8 @@
 import os
 import csv
+import psycopg2
+from psycopg2.extras import execute_values
 from dotenv import load_dotenv
-from supabase import create_client, Client
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SYNTHETIC_DIR = os.path.join(BASE_DIR, 'data', 'synthetic')
@@ -10,14 +11,14 @@ PROJECT_ROOT = os.path.dirname(BASE_DIR)
 
 load_dotenv(os.path.join(PROJECT_ROOT, '.env'))
 
-url: str = os.environ.get("SUPABASE_URL")
-key: str = os.environ.get("SUPABASE_SERVICE_KEY")
-
-if not url or not key:
-    print("Warning: SUPABASE_URL or SUPABASE_SERVICE_KEY not found. Skipping seeding.")
-    exit(0)
-
-supabase: Client = create_client(url, key)
+db_url = os.environ.get("DATABASE_URL")
+if db_url:
+    # Use Supavisor connection pooler for IPv4 compatibility
+    # Original: postgresql://postgres:password@db.aynzhepktrvgtxqcdwdn.supabase.co:5432/postgres
+    import urllib.parse
+    parsed = urllib.parse.urlparse(db_url)
+    password = parsed.password
+    db_url = f"postgresql://postgres.aynzhepktrvgtxqcdwdn:{password}@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres"
 
 TABLES_TO_SEED = [
     # Table name, directory, file name
@@ -35,7 +36,7 @@ TABLES_TO_SEED = [
     ("agent_audit", SYNTHETIC_DIR, "agent_audit.csv")
 ]
 
-def seed_table(table_name, dir_path, file_name):
+def seed_table(conn, table_name, dir_path, file_name):
     print(f"\nSeeding {table_name}...")
     file_path = os.path.join(dir_path, file_name)
     
@@ -43,45 +44,57 @@ def seed_table(table_name, dir_path, file_name):
         print(f"  Skipping {table_name}: file {file_name} not found.")
         return
         
-    # Read rows
     rows = []
+    columns = []
     with open(file_path, 'r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
+        columns = reader.fieldnames
         for row in reader:
-            # Simple conversion for JSONB/Boolean fields where necessary
             if table_name == 'products':
-                row['active'] = row['active'] == 'True'
+                row['active'] = (row['active'] == 'True')
                 if not row['inventory_qty']: row['inventory_qty'] = 0
             
-            rows.append(row)
+            # Format row as tuple
+            rows.append(tuple(row[col] if row[col] != '' else None for col in columns))
             
     if not rows:
         print(f"  {table_name} is empty.")
         return
         
-    print(f"  Read {len(rows)} rows. Inserting in batches of 500...")
+    print(f"  Read {len(rows)} rows. Inserting...")
     
-    # We don't truncate by default to avoid destroying other data, 
-    # but in a real pipeline we might want a clean slate option.
+    insert_query = f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES %s ON CONFLICT DO NOTHING;"
     
-    batch_size = 500
-    success = 0
-    
-    for i in range(0, len(rows), batch_size):
-        batch = rows[i:i+batch_size]
-        try:
-            supabase.table(table_name).insert(batch).execute()
-            success += len(batch)
-            print(f"  Inserted {success}/{len(rows)}")
-        except Exception as e:
-            print(f"  Error inserting batch {i//batch_size}: {e}")
-            # we continue to try next batch
+    try:
+        with conn.cursor() as cur:
+            execute_values(cur, insert_query, rows, page_size=1000)
+        conn.commit()
+        print(f"  Successfully inserted/merged rows for {table_name}.")
+    except Exception as e:
+        conn.rollback()
+        print(f"  Error inserting {table_name}: {e}")
 
 def run():
     print("Starting database seed...")
-    for table_name, dir_path, file_name in TABLES_TO_SEED:
-        seed_table(table_name, dir_path, file_name)
-    print("\nDatabase seeding finished.")
+    try:
+        conn = psycopg2.connect(db_url)
+        
+        print("Executing schema.sql...")
+        schema_path = os.path.join(PROJECT_ROOT, 'backend', 'db', 'schema.sql')
+        with open(schema_path, 'r', encoding='utf-8') as f:
+            schema_sql = f.read()
+            
+        with conn.cursor() as cur:
+            cur.execute(schema_sql)
+        conn.commit()
+        print("Schema applied.")
+        
+        for table_name, dir_path, file_name in TABLES_TO_SEED:
+            seed_table(conn, table_name, dir_path, file_name)
+        conn.close()
+        print("\nDatabase seeding finished.")
+    except Exception as e:
+        print(f"Failed to connect or seed database: {e}")
 
 if __name__ == "__main__":
     run()

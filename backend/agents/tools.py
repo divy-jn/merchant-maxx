@@ -100,69 +100,181 @@ def get_product_details(item_id: str):
     except Exception as e:
         return f"Error fetching product details: {str(e)}"
 
+from langgraph.prebuilt import InjectedState
+from typing import Annotated
+
 @tool
-def create_payment_link_for_product(item_id: str, user_confirmed: bool = False, customer_email: str = None, customer_contact: str = None):
-    """Creates a Razorpay payment link for a product. MUST set user_confirmed=True only when the user has explicitly said yes/confirm/go ahead."""
+def create_razorpay_order(
+    state: Annotated[dict, InjectedState], 
+    customer_email: str = None, 
+    customer_contact: str = None
+):
+    """Creates a Razorpay Order based on the user's current purchase context."""
     try:
-        from razorpay_service import items, payment_links
+        from razorpay_service import items, orders
+        
+        ctx = state.get("purchase_context", {})
+        if not ctx or not ctx.get("basket_items"):
+            return "Error: No product selected in purchase context."
+            
+        item_id = ctx["basket_items"][0]["product_id"]
+        amount = ctx["amount_paise"]
+        user_confirmed = state.get("user_confirmed", False)
+        
         item = items.fetch_item(item_id)
         
         # Guardian Validation
         action_intent = {
-            "description": f"Create payment link for {item['name']}",
-            "user_confirmed": user_confirmed
+            "description": f"Create order for {item['name']}",
+            "user_confirmed": user_confirmed,
+            "purchase_state": state.get("purchase_state", "IDLE"),
+            "purchase_intent_id": ctx.get("purchase_intent_id"),
+            "action_type": "create_razorpay_order"
         }
         validate_action(
             agent_name="Closer",
-            action_type="create_payment_link",
+            action_type="create_razorpay_order",
             action_intent=action_intent,
-            amount_paise=item["amount"]
+            amount_paise=amount
         )
         
-        customer = {}
-        if customer_email: customer["email"] = customer_email
-        if customer_contact: customer["contact"] = customer_contact
+        notes = {}
+        if customer_email: notes["customer_email"] = customer_email
+        if customer_contact: notes["customer_contact"] = customer_contact
+        notes["item_name"] = item["name"]
         
-        plink = payment_links.create_payment_link(
-            amount_paise=item["amount"],
-            description=f"Purchase of {item['name']}",
-            customer=customer if customer else None
+        order = orders.create_order(
+            amount_paise=amount,
+            currency="INR",
+            receipt=ctx.get("purchase_intent_id"),
+            notes=notes
         )
-        price = plink['amount'] / 100
+        
+        try:
+            from utils.supabase_client import supabase
+            import uuid
+            import logging
+            logger = logging.getLogger(__name__)
+            
+            local_order_id = f"ord_{uuid.uuid4().hex[:12]}"
+            if supabase:
+                supabase.table("entity_mapping").insert({
+                    "synthetic_id": local_order_id,
+                    "entity_type": "order",
+                    "razorpay_id": order["id"]
+                }).execute()
+        except Exception as e:
+            logger.error(f"Failed to save entity mapping: {e}")
+
+        price = order['amount'] / 100
         return (
-            f"Payment link created!\n"
+            f"Razorpay Order created successfully!\n"
             f"Product: {item['name']}\n"
             f"Amount: Rs.{price:,.2f}\n"
-            f"Pay here: {plink['short_url']}"
+            f"Order ID: {order['id']}\n"
+            f"Tell the user: 'I have generated your order. Please proceed to payment using Order ID: {order['id']}'"
         )
     except GuardianException as ge:
-        return f"Payment blocked: User confirmation is required before creating a payment link. Please ask the user to confirm."
+        return f"Order blocked by Guardian: {str(ge)}"
     except Exception as e:
-        return f"Error creating payment link: {str(e)}"
+        return f"Error creating order: {str(e)}"
+
+@tool
+def confirm_and_pay() -> str:
+    """Call this tool ONLY when the user has explicitly confirmed they want to proceed with the purchase."""
+    return "Purchase confirmed by user. Please proceed to generate the order."
+
+@tool
+def reset_purchase_intent() -> str:
+    """Call this tool ONLY if the previous payment failed or was unknown, and the user wants to try paying again."""
+    return "Purchase intent reset. You may now generate a new order."
 
 # Discovery tools (for Scout)
 @tool
-def fetch_recommendations(customer_id: str = None, category: str = None) -> str:
+def fetch_recommendations(state: Annotated[dict, InjectedState], customer_id: str = None, category: str = None) -> str:
     """Fetches data-driven product recommendations based on product affinity and customer metrics."""
-    return (
-        "Here are the data-backed recommendations based on the analytics dataset:\n"
-        "- Laptop Sleeve (Affinity Score: 0.85, Confidence: 0.92) - Fits within explicit budget.\n"
-        "- Wireless Mouse (Affinity Score: 0.76, Lift: 2.1) - Frequently bought together."
-    )
+    ctx = state.get("purchase_context", {})
+    basket = ctx.get("basket_items", [])
+    if not basket:
+        return "No products in basket to recommend against."
+        
+    product_id = basket[0]["product_id"]
+    
+    from utils.supabase_client import supabase
+    if not supabase:
+        return "Database connection not available. Unable to fetch data-backed recommendations."
+        
+    try:
+        # Fetch affinity
+        res = supabase.table("product_affinity").select("*, products(name, price_paise, description)").eq("product_id", product_id).order("lift_score", desc=True).limit(2).execute()
+        
+        if not res.data:
+            return "No data-backed recommendations found for this product."
+            
+        recs = []
+        import uuid
+        for r in res.data:
+            prod = r.get("products", {})
+            name = prod.get("name") or r["related_product_id"]
+            price = prod.get("price_paise", 0) / 100
+            
+            # Log generation to DB
+            rec_id = f"rec_{uuid.uuid4().hex[:12]}"
+            try:
+                supabase.table("recommendation_events").insert({
+                    "recommendation_id": rec_id,
+                    "session_id": state.get("session_id"),
+                    "customer_id": state.get("customer_id"),
+                    "merchant_id": "merchant_mxx_001",
+                    "source_product_id": product_id,
+                    "recommended_product_id": r["related_product_id"],
+                    "recommendation_type": "CROSS_SELL",
+                    "agent_name": "Booster",
+                    "score": r.get("lift_score", 0),
+                    "reason": f"co_purchase (lift: {r.get('lift_score', 0)})",
+                    "status": "GENERATED"
+                }).execute()
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Failed to log recommendation_event: {e}")
+                
+            recs.append(f"- {name} (Rs.{price:,.2f}) [Rec ID: {rec_id}] - Affinity: {r.get('support_score', 0)}, Lift: {r.get('lift_score', 0)}")
+            
+        return "Data-backed recommendations:\n" + "\n".join(recs)
+    except Exception as e:
+        return f"Error fetching recommendations: {e}"
 
 @tool
 def analyze_campaign_opportunities() -> str:
     """Analyzes customer metrics and product performance to identify campaign opportunities."""
-    return (
-        "Detected Opportunities:\n"
-        "- FLASH_SALE: High traffic, low conversion in Electronics (Estimated Uplift: +15%).\n"
-        "- REACTIVATION: 120 VIP customers at Churn Risk (Predicted Impact: Rs.5,00,000)."
-    )
+    from utils.supabase_client import supabase
+    if not supabase:
+        return "Database connection not available."
+        
+    try:
+        # Simple campaign opportunity detection from customer_metrics
+        res = supabase.table("customer_metrics").select("*").order("ltv", desc=True).limit(5).execute()
+        if not res.data:
+            return "No campaign opportunities found."
+            
+        opportunities = ["Detected Opportunities:"]
+        opportunities.append("- HIGH_VALUE_VIP: Top customers ready for premium cross-sell.")
+        for c in res.data:
+            opportunities.append(f"  - Customer {c['customer_id']} (Segment: {c.get('segment', 'General')}, LTV: Rs.{c.get('ltv', 0):.2f})")
+            
+        return "\n".join(opportunities)
+    except Exception as e:
+        return f"Error analyzing campaign opportunities: {e}"
 
-DISCOVERY_TOOLS = [search_catalog, get_product_details, fetch_recommendations, analyze_campaign_opportunities]
+@tool
+def stage_purchase_intent(product_id: str, amount_paise: int) -> str:
+    """Stages a product for purchase checkout. Use this when the user explicitly wants to buy a product."""
+    return f"Purchase intent staged for {product_id}."
+
+DISCOVERY_TOOLS = [search_catalog, get_product_details, fetch_recommendations, analyze_campaign_opportunities, stage_purchase_intent]
 
 # Payment tools (for Closer)
-PAYMENT_TOOLS = [create_payment_link_for_product]
+PAYMENT_TOOLS = [create_razorpay_order, confirm_and_pay, reset_purchase_intent]
 
 # All tools combined (for ToolNode execution)
-ALL_TOOLS = [search_catalog, get_product_details, create_payment_link_for_product]
+ALL_TOOLS = [search_catalog, get_product_details, create_razorpay_order, stage_purchase_intent, confirm_and_pay, reset_purchase_intent]
