@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional
+from datetime import datetime, timezone
 import re
 from agents.maxx import maxx_app
 from langchain_core.messages import HumanMessage
@@ -23,6 +24,29 @@ def _load_active_intent(conv_id: str):
               .order("created_at", desc=True).limit(1).execute())
     return result.data[0] if result.data else None
 
+def _accept_latest_recommendation(intent: dict):
+    rec_q = (supabase.table("recommendation_events").select("*").eq("session_id", intent["conversation_id"])
+             .eq("status", "GENERATED").order("shown_at", desc=True).limit(1).execute())
+    rec = rec_q.data[0] if rec_q.data else None
+    if not rec:
+        return intent
+    product_q = (supabase.table("products").select("product_id,price_paise,active,inventory_qty")
+                 .eq("product_id", rec["recommended_product_id"]).eq("merchant_id", "merchant_mxx_001").maybe_single().execute())
+    product = product_q.data
+    if not product or not product.get("active") or (product.get("inventory_qty") or 0) < 1:
+        return intent
+    basket = list(intent.get("basket") or [])
+    if not any(x.get("product_id") == product["product_id"] for x in basket):
+        basket.append({"product_id": product["product_id"], "quantity": 1})
+    subtotal = 0
+    for item in basket:
+        p = (supabase.table("products").select("price_paise").eq("product_id", item["product_id"]).maybe_single().execute()).data
+        if p: subtotal += int(p["price_paise"]) * int(item.get("quantity", 1))
+    now = datetime.now(timezone.utc).isoformat()
+    supabase.table("recommendation_events").update({"status": "ACCEPTED", "accepted_at": now}).eq("recommendation_id", rec["recommendation_id"]).eq("status", "GENERATED").execute()
+    supabase.table("purchase_intents").update({"basket": basket, "subtotal_paise": subtotal, "amount_paise": subtotal, "recommendation_id": rec["recommendation_id"], "purchase_state": "USER_CONFIRMED", "user_confirmed": True, "updated_at": now}).eq("purchase_intent_id", intent["purchase_intent_id"]).execute()
+    return dict(intent, basket=basket, subtotal_paise=subtotal, amount_paise=subtotal, recommendation_id=rec["recommendation_id"], purchase_state="USER_CONFIRMED", user_confirmed=True)
+
 @router.post("/", response_model=ChatResponse)
 async def chat_with_maxx(req: ChatRequest, current_user: dict = Depends(get_current_user)):
     if not supabase:
@@ -35,23 +59,24 @@ async def chat_with_maxx(req: ChatRequest, current_user: dict = Depends(get_curr
             if user_id: data["user_id"] = user_id
             conv_id = supabase.table("conversations").insert(data).execute().data[0]["id"]
         supabase.table("messages").insert({"conversation_id": conv_id, "role": "user", "content": req.message}).execute()
-
         intent = _load_active_intent(conv_id)
-        confirmed_now = bool(intent and intent.get("purchase_state") == "PURCHASE_PENDING" and CONFIRM_RE.match(req.message.strip()))
+        confirmed_now = bool(intent and intent.get("purchase_state") in {"PURCHASE_PENDING", "RECOMMENDATION_SHOWN"} and CONFIRM_RE.match(req.message.strip()))
         if confirmed_now:
-            supabase.table("purchase_intents").update({"user_confirmed": True, "purchase_state": "USER_CONFIRMED"}).eq("purchase_intent_id", intent["purchase_intent_id"]).execute()
-            intent = dict(intent, user_confirmed=True, purchase_state="USER_CONFIRMED")
+            if intent.get("purchase_state") == "RECOMMENDATION_SHOWN":
+                intent = _accept_latest_recommendation(intent)
+            else:
+                now = datetime.now(timezone.utc).isoformat()
+                supabase.table("purchase_intents").update({"user_confirmed": True, "purchase_state": "USER_CONFIRMED", "updated_at": now}).eq("purchase_intent_id", intent["purchase_intent_id"]).execute()
+                intent = dict(intent, user_confirmed=True, purchase_state="USER_CONFIRMED")
 
         context, purchase_state, user_confirmed = {}, "IDLE", False
         if intent:
             purchase_state = intent.get("purchase_state", "PURCHASE_PENDING")
             user_confirmed = bool(intent.get("user_confirmed"))
-            context = {"purchase_intent_id": intent["purchase_intent_id"], "basket_items": intent.get("basket") or [],
-                       "amount_paise": int(intent.get("amount_paise") or 0), "intent_description": "Persisted purchase intent"}
+            context = {"purchase_intent_id": intent["purchase_intent_id"], "basket_items": intent.get("basket") or [], "amount_paise": int(intent.get("amount_paise") or 0), "intent_description": "Persisted purchase intent"}
         final_state = maxx_app.invoke({"messages": [HumanMessage(content=req.message)], "session_id": conv_id,
                                        "customer_id": (intent or {}).get("customer_id") or (current_user or {}).get("customer_id", ""),
-                                       "purchase_state": purchase_state, "purchase_context": context,
-                                       "user_confirmed": user_confirmed},
+                                       "purchase_state": purchase_state, "purchase_context": context, "user_confirmed": user_confirmed},
                                       config={"configurable": {"thread_id": conv_id}})
         response = final_state["messages"][-1].content if final_state.get("messages") else "How can I help?"
         if isinstance(response, list):
