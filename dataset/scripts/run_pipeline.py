@@ -29,6 +29,7 @@ def run_pipeline():
         "generate_synthetic_data.py",
         "build_product_affinity.py",
         "build_customer_metrics.py",
+        "demo_fixtures.py",
         "validate_data.py"
     ]
     

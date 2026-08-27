@@ -1,5 +1,6 @@
 import os
 import csv
+import sys
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SYNTHETIC_DIR = os.path.join(BASE_DIR, 'data', 'synthetic')
@@ -17,7 +18,7 @@ def validate():
     if errors:
         print("Validations failed to start due to missing files:")
         for e in errors: print(e)
-        return
+        sys.exit(1)
         
     orders = {}
     with open(os.path.join(SYNTHETIC_DIR, 'orders.csv'), 'r') as f:
@@ -54,12 +55,14 @@ def validate():
                 
     if not errors:
         print("SUCCESS! All validations passed. Data is structurally and monetarily sound.")
+        sys.exit(0)
     else:
         print(f"FAILED with {len(errors)} errors:")
         for e in errors[:10]:
             print(f" - {e}")
         if len(errors) > 10:
             print(f" ... and {len(errors)-10} more.")
+        sys.exit(1)
 
 if __name__ == "__main__":
     validate()

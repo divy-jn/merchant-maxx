@@ -20,11 +20,18 @@ NUM_ORDERS = 5000
 
 CATEGORIES = [
     "Electronics", "Fashion", "Beauty", "Home & Kitchen", 
-    "Grocery", "Sports & Fitness", "Accessories", "Books"
+    "Grocery", "Sports & Fitness", "Accessories", "Books",
+    "Health & Wellness", "Travel", "Pet Supplies"
 ]
 BRANDS = ["UrbanPulse", "TechVista", "ZenFit", "NovaCraft", "GreenLeaf", "SilkThread", "PixelPro"]
-INDIAN_CITIES = ["Bengaluru", "Mumbai", "Delhi", "Hyderabad", "Chennai", "Pune", "Gurugram"]
-INDIAN_STATES = ["Karnataka", "Maharashtra", "Delhi", "Telangana", "Tamil Nadu", "Maharashtra", "Haryana"]
+INDIAN_CITIES = [
+    "Bengaluru", "Mumbai", "Delhi", "Hyderabad", "Chennai", "Pune", "Gurugram",
+    "Noida", "Ahmedabad", "Jaipur", "Kolkata", "Kochi", "Chandigarh", "Lucknow", "Indore"
+]
+INDIAN_STATES = [
+    "Karnataka", "Maharashtra", "Delhi", "Telangana", "Tamil Nadu", "Maharashtra", "Haryana",
+    "Uttar Pradesh", "Gujarat", "Rajasthan", "West Bengal", "Kerala", "Chandigarh", "Uttar Pradesh", "Madhya Pradesh"
+]
 
 PAYMENT_DIST = {"CAPTURED": 0.88, "FAILED": 0.05, "AUTHORIZED": 0.03, "CREATED": 0.02, "UNKNOWN": 0.02}
 PAYMENT_METHODS = ["UPI", "CARD", "NETBANKING", "WALLET", "EMI"]
@@ -35,7 +42,7 @@ def generate_id(prefix=""):
 
 def load_patterns():
     patterns = {}
-    for f in ['rr_funnel_rates.json', 'olist_patterns.json']:
+    for f in ['rr_funnel_rates.json', 'olist_patterns.json', 'rr_session_patterns.json', 'rr_co_purchase.json']:
         try:
             with open(os.path.join(PROCESSED_DIR, f), 'r') as fp:
                 patterns[f] = json.load(fp)
@@ -125,9 +132,22 @@ def run():
         oid = generate_id("order")
         current_time += timedelta(minutes=random.randint(5, 60))
         
-        # Simulate basket
-        basket_size = 1 if random.random() < 0.85 else (2 if random.random() < 0.8 else 3)
-        basket_products = random.sample(products, basket_size)
+        # Simulate basket (2c: basket reconstruction from co-purchase data)
+        co_purchase = patterns.get('rr_co_purchase.json', {})
+        base_product = random.choice(products)
+        basket_products = [base_product]
+        
+        if random.random() < 0.15: # 15% chance of multi-item basket
+            related = co_purchase.get(base_product["product_id"])
+            if related:
+                related_id = random.choice(list(related.keys()))
+                related_product = next((p for p in products if p["product_id"] == related_id), None)
+                if related_product and related_product not in basket_products:
+                    basket_products.append(related_product)
+            if len(basket_products) == 1: # fallback
+                fallback = random.choice(products)
+                if fallback["product_id"] != base_product["product_id"]:
+                    basket_products.append(fallback)
         
         subtotal = 0
         discount = 0 # simplifying discount for now
@@ -236,6 +256,8 @@ def run():
         # Agent Audit (simulate workflow if AI Agent)
         if source == "AI_AGENT":
             sess_id = generate_id("chat")
+            
+            # Scout Search
             agent_audit.append({
                 "audit_id": generate_id("aud"), "session_id": sess_id, "customer_id": cid, "merchant_id": MERCHANT_ID,
                 "agent_name": "Scout", "action_type": "SEARCH", "entity_type": "", "entity_id": "",
@@ -244,6 +266,29 @@ def run():
                 "failure_code": "", "failure_reason": "", "razorpay_entity_id": "", "purchase_state": "PRODUCT_SELECTED",
                 "created_at": (current_time - timedelta(minutes=5)).isoformat()
             })
+            
+            # Booster Recommend
+            if len(basket_products) > 1:
+                agent_audit.append({
+                    "audit_id": generate_id("aud"), "session_id": sess_id, "customer_id": cid, "merchant_id": MERCHANT_ID,
+                    "agent_name": "Booster", "action_type": "RECOMMEND", "entity_type": "PRODUCT", "entity_id": basket_products[-1]["product_id"],
+                    "amount_paise": 0, "status": "SUCCESS", "user_confirmed": False, "guardian_approved": False,
+                    "risk_score": 0.0, "reasoning": "Suggested cross-sell item", "input_summary": "", "output_summary": "",
+                    "failure_code": "", "failure_reason": "", "razorpay_entity_id": "", "purchase_state": "RECOMMENDATION_SHOWN",
+                    "created_at": (current_time - timedelta(minutes=4)).isoformat()
+                })
+            
+            # Closer Order
+            agent_audit.append({
+                "audit_id": generate_id("aud"), "session_id": sess_id, "customer_id": cid, "merchant_id": MERCHANT_ID,
+                "agent_name": "Closer", "action_type": "create_razorpay_order", "entity_type": "ORDER", "entity_id": oid,
+                "amount_paise": total, "status": "SUCCESS", "user_confirmed": True, "guardian_approved": True,
+                "risk_score": 0.0, "reasoning": "Order created", "input_summary": "", "output_summary": "",
+                "failure_code": "", "failure_reason": "", "razorpay_entity_id": "", "purchase_state": "ORDER_CREATED",
+                "created_at": (current_time - timedelta(minutes=2)).isoformat()
+            })
+            
+            # Guardian Validate
             agent_audit.append({
                 "audit_id": generate_id("aud"), "session_id": sess_id, "customer_id": cid, "merchant_id": MERCHANT_ID,
                 "agent_name": "Guardian", "action_type": "VALIDATE", "entity_type": "ORDER", "entity_id": oid,
@@ -258,21 +303,31 @@ def run():
                     "audit_id": generate_id("aud"), "session_id": sess_id, "customer_id": cid, "merchant_id": MERCHANT_ID,
                     "agent_name": "Guardian", "action_type": "BLOCK_RETRY", "entity_type": "PAYMENT", "entity_id": pay_id,
                     "amount_paise": total, "status": "BLOCKED", "user_confirmed": True, "guardian_approved": False,
-                    "risk_score": 0.8, "reasoning": "Blocked blind retry after failure", "input_summary": "", "output_summary": "",
-                    "failure_code": "RULE_08", "failure_reason": "No blind retry", "razorpay_entity_id": "", "purchase_state": "PAYMENT_FAILED",
+                    "risk_score": 0.8, "reasoning": "Blocked blind retry after failure (RULE_08)", "input_summary": "", "output_summary": "",
+                    "failure_code": "RULE_08", "failure_reason": "No blind retry without state inspection", "razorpay_entity_id": "", "purchase_state": "PAYMENT_FAILED",
                     "created_at": current_time.isoformat()
                 })
                 
             # Recommendations
+            is_converted = len(basket_products) > 1 and p_status == "CAPTURED"
+            is_accepted = is_converted or random.random() < 0.2
+            is_clicked = is_accepted or random.random() < 0.5
+            
+            status = "CONVERTED" if is_converted else ("ACCEPTED" if is_accepted else ("CLICKED" if is_clicked else "SHOWN"))
+            
             recommendation_events.append({
                 "recommendation_id": generate_id("rec"), "session_id": sess_id, "customer_id": cid, "merchant_id": MERCHANT_ID,
-                "source_product_id": basket_products[0]["product_id"], "recommended_product_id": random.choice(product_ids),
-                "recommendation_type": "CROSS_SELL", "agent_name": "Booster", "affinity_score": round(random.uniform(0.1, 0.9), 2),
+                "source_product_id": basket_products[0]["product_id"], 
+                "recommended_product_id": basket_products[-1]["product_id"] if len(basket_products) > 1 else random.choice(product_ids),
+                "recommendation_type": "CROSS_SELL", "agent_name": "Booster", 
+                "score": round(random.uniform(0.1, 0.9), 2),
+                "reason": "Based on co-purchase history",
                 "shown_at": (current_time - timedelta(minutes=4)).isoformat(),
-                "clicked_at": (current_time - timedelta(minutes=3)).isoformat() if random.random() < 0.5 else "",
-                "accepted_at": (current_time - timedelta(minutes=2)).isoformat() if random.random() < 0.2 else "",
-                "resulting_order_id": oid, "revenue_paise": basket_products[-1]["price_paise"] if len(basket_products)>1 else 0,
-                "status": "CONVERTED" if len(basket_products)>1 else "SHOWN"
+                "clicked_at": (current_time - timedelta(minutes=3)).isoformat() if is_clicked else "",
+                "accepted_at": (current_time - timedelta(minutes=2)).isoformat() if is_accepted else "",
+                "resulting_order_id": oid if is_converted else "",
+                "revenue_paise": basket_products[-1]["price_paise"] if is_converted else 0,
+                "status": status
             })
             
     # Campaigns

@@ -14,6 +14,9 @@ def validate_action(agent_name: str, action_type: str, action_intent: dict, amou
     """
     logger.info(f"[GUARDIAN] Validating {action_type} from {agent_name} for amount {amount_paise}")
     
+    # Inject action_type so constitutional checks can evaluate it
+    action_intent["action_type"] = action_type
+    
     # 1. Run constitutional checks
     eval_result = evaluate_safety(action_intent, amount_paise)
     

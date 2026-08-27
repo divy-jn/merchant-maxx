@@ -223,7 +223,8 @@ CREATE TABLE IF NOT EXISTS recommendation_events (
     recommended_product_id TEXT,
     recommendation_type TEXT,
     agent_name TEXT,
-    affinity_score REAL,
+    score REAL,
+    reason TEXT,
     shown_at TIMESTAMPTZ,
     clicked_at TIMESTAMPTZ,
     accepted_at TIMESTAMPTZ,
@@ -241,8 +242,11 @@ CREATE TABLE IF NOT EXISTS agent_audit (
     action_type TEXT,
     entity_type TEXT,
     entity_id TEXT,
+    amount_paise BIGINT DEFAULT 0,
     status TEXT,
-    risk_score REAL,
+    user_confirmed BOOLEAN DEFAULT false,
+    guardian_approved BOOLEAN DEFAULT false,
+    risk_score REAL DEFAULT 0.0,
     reasoning TEXT,
     input_summary TEXT,
     output_summary TEXT,
@@ -262,3 +266,131 @@ CREATE TABLE IF NOT EXISTS entity_mapping (
     razorpay_id TEXT NOT NULL,
     created_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- ==========================================
+-- FOREIGN KEY CONSTRAINTS
+-- ==========================================
+-- Using DO blocks to add constraints idempotently (skip if already exists)
+
+DO $$ BEGIN
+    ALTER TABLE orders ADD CONSTRAINT fk_orders_customer
+        FOREIGN KEY (customer_id) REFERENCES customers(customer_id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE order_items ADD CONSTRAINT fk_oi_order
+        FOREIGN KEY (order_id) REFERENCES orders(order_id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE order_items ADD CONSTRAINT fk_oi_product
+        FOREIGN KEY (product_id) REFERENCES products(product_id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE payments ADD CONSTRAINT fk_payments_order
+        FOREIGN KEY (order_id) REFERENCES orders(order_id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE payments ADD CONSTRAINT fk_payments_customer
+        FOREIGN KEY (customer_id) REFERENCES customers(customer_id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE refunds ADD CONSTRAINT fk_refunds_payment
+        FOREIGN KEY (payment_id) REFERENCES payments(payment_id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE refunds ADD CONSTRAINT fk_refunds_order
+        FOREIGN KEY (order_id) REFERENCES orders(order_id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE customer_events ADD CONSTRAINT fk_ce_customer
+        FOREIGN KEY (customer_id) REFERENCES customers(customer_id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE customer_events ADD CONSTRAINT fk_ce_product
+        FOREIGN KEY (product_id) REFERENCES products(product_id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE recommendation_events ADD CONSTRAINT fk_reco_source_product
+        FOREIGN KEY (source_product_id) REFERENCES products(product_id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE recommendation_events ADD CONSTRAINT fk_reco_recommended_product
+        FOREIGN KEY (recommended_product_id) REFERENCES products(product_id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE recommendation_events ADD CONSTRAINT fk_reco_order
+        FOREIGN KEY (resulting_order_id) REFERENCES orders(order_id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- ==========================================
+-- ADDITIONAL INDEXES FOR PIPELINE TABLES
+-- ==========================================
+
+CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id);
+CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
+CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
+CREATE INDEX IF NOT EXISTS idx_payments_order ON payments(order_id);
+CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
+CREATE INDEX IF NOT EXISTS idx_customer_events_customer ON customer_events(customer_id);
+CREATE INDEX IF NOT EXISTS idx_customer_events_session ON customer_events(session_id);
+CREATE INDEX IF NOT EXISTS idx_product_affinity_product ON product_affinity(product_id);
+CREATE INDEX IF NOT EXISTS idx_customer_metrics_segment ON customer_metrics(segment);
+CREATE INDEX IF NOT EXISTS idx_recommendation_events_session ON recommendation_events(session_id);
+CREATE INDEX IF NOT EXISTS idx_recommendation_events_status ON recommendation_events(status);
+CREATE INDEX IF NOT EXISTS idx_agent_audit_session ON agent_audit(session_id);
+CREATE INDEX IF NOT EXISTS idx_agent_audit_agent ON agent_audit(agent_name);
+CREATE INDEX IF NOT EXISTS idx_entity_mapping_synthetic ON entity_mapping(synthetic_id);
+CREATE INDEX IF NOT EXISTS idx_entity_mapping_razorpay ON entity_mapping(razorpay_id);
+
+-- RLS for new tables
+ALTER TABLE products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE customers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE order_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE refunds ENABLE ROW LEVEL SECURITY;
+ALTER TABLE customer_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE product_affinity ENABLE ROW LEVEL SECURITY;
+ALTER TABLE customer_metrics ENABLE ROW LEVEL SECURITY;
+ALTER TABLE campaigns ENABLE ROW LEVEL SECURITY;
+ALTER TABLE recommendation_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_audit ENABLE ROW LEVEL SECURITY;
+ALTER TABLE entity_mapping ENABLE ROW LEVEL SECURITY;
+
+-- Permissive policies for service key access
+DO $$ 
+DECLARE
+    tbl TEXT;
+BEGIN
+    FOR tbl IN SELECT unnest(ARRAY[
+        'products','customers','orders','order_items','payments','refunds',
+        'customer_events','product_affinity','customer_metrics','campaigns',
+        'recommendation_events','agent_audit','entity_mapping'
+    ])
+    LOOP
+        EXECUTE format('DROP POLICY IF EXISTS "Allow all on %I" ON %I', tbl, tbl);
+        EXECUTE format('CREATE POLICY "Allow all on %I" ON %I FOR ALL USING (true)', tbl, tbl);
+    END LOOP;
+END $$;

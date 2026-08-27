@@ -73,20 +73,24 @@ def evaluate_safety(action_intent: dict, amount_paise: int = 0) -> Constitutiona
         violations.append("RULE_02_USER_CONFIRMATION: Missing explicit user confirmation.")
         risk += 0.6
         
-    # NEW RULE IMPLEMENTATIONS
-    state = action_intent.get("purchase_state", "")
+    action_type = action_intent.get("action_type")
+    state = action_intent.get("purchase_state", "IDLE")
     
+    # RULE_05: Idempotency
     if action_intent.get("is_duplicate", False):
         violations.append("RULE_05_IDEMPOTENCY: Duplicate action detected based on intent identifier.")
         risk += 0.9
         
-    if state == "PAYMENT_FAILED" and action_intent.get("action_type") == "retry_payment" and not action_intent.get("state_inspected", False):
-        violations.append("RULE_08_NO_BLIND_RETRY: Must inspect actual payment state before retrying after failure.")
+    # RULE_06: Valid State
+    if action_type == "create_razorpay_order" and state != "USER_CONFIRMED":
+        violations.append(f"RULE_06_VALID_STATE: Cannot create order in state {state}. Must be USER_CONFIRMED.")
+        risk += 0.7
+        
+    # RULE_08: No Blind Retry
+    if action_type == "create_razorpay_order" and state in ["PAYMENT_FAILED", "PAYMENT_UNKNOWN"]:
+        violations.append("RULE_08_NO_BLIND_RETRY: Blocked blind retry after failure. Must inspect state and generate a new purchase intent.")
         risk += 1.0
         
-    # In a full implementation, we would use an LLM here to evaluate RULE_03 and RULE_04
-    # against the conversational context.
-    
     passed = len(violations) == 0
     reasoning = "All safety checks passed." if passed else "Safety violations detected. Blocking action."
     
