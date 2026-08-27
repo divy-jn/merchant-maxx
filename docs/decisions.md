@@ -171,4 +171,43 @@
 
 ---
 
-*Last updated: 2026-08-25*
+## Decision 010: Server-authoritative purchase state via `purchase_intents`
+
+**Date:** 2026-08-27 | **Status:** ✅ Decided
+
+**Context:** LLM-managed state was unreliable — agents could hallucinate `user_confirmed=True` or supply incorrect amounts. Purchase state needed to survive server restarts and be tamper-proof.
+
+**Options:**
+1. Keep state in LangGraph `AgentState` only (in-memory, LLM-mutable)
+2. **Persist authoritative state in Supabase `purchase_intents` table** (server-side, loaded/saved per chat turn)
+3. Use Redis for ephemeral state (fast but volatile)
+
+**Decision:** Option 2 — Supabase `purchase_intents` as single source of truth.
+
+**Rationale:**
+- Chat route loads existing intent on each turn, passes it to LangGraph as read-only context
+- After LangGraph runs, route persists updated state back to Supabase
+- Guardian reads `user_confirmed` and `amount_paise` from DB, not LLM state
+- Webhooks use `purchase_intent_id` (stored as Razorpay order receipt) for attribution
+- Survives server restarts, multi-instance deployments, and LLM hallucinations
+
+---
+
+## Decision 011: Scoped tool sets per agent
+
+**Date:** 2026-08-27 | **Status:** ✅ Decided
+
+**Context:** All agents previously had access to all tools via `DISCOVERY_TOOLS` and `PAYMENT_TOOLS` with loose boundaries.
+
+**Decision:** Split tools into scoped sets — `SCOUT_TOOLS`, `BOOSTER_TOOLS`, `CAMPAIGNER_TOOLS`, `PAYMENT_TOOLS`. Each agent binds only its own tools.
+
+**Rationale:**
+- Principle of least privilege — Scout can't create orders, Closer can't search catalog
+- Reduces LLM confusion from irrelevant tool descriptions
+- Makes Guardian violations easier to detect (wrong tool usage = wrong agent)
+- `confirm_and_pay` was a no-op placebo tool; replaced with real `check_payment_status`
+
+---
+
+*Last updated: 2026-08-27*
+
