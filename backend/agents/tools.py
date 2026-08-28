@@ -71,6 +71,14 @@ def fetch_recommendations(state: Annotated[dict, InjectedState], customer_id: st
             p = (supabase.table("products").select("product_id,name,price_paise,description,inventory_qty,active,category")
                  .eq("product_id", row["related_product_id"]).eq("merchant_id", "merchant_mxx_001").maybe_single().execute()).data
             if p and p.get("active") and (p.get("inventory_qty") or 0) > 0 and p["product_id"] != product_id: candidates.append((row,p))
+        if not candidates:
+            # Fallback heuristic: find products in the same category
+            cat_res = supabase.table("products").select("category").eq("product_id", product_id).maybe_single().execute().data
+            if cat_res and cat_res.get("category"):
+                fallback = supabase.table("products").select("product_id,name,price_paise,description,inventory_qty,active,category").eq("category", cat_res["category"]).neq("product_id", product_id).limit(2).execute().data or []
+                for p in fallback:
+                    if p and p.get("active") and (p.get("inventory_qty") or 0) > 0:
+                        candidates.append(({"lift_score": 1.1}, p))
         if not candidates: return "No sufficiently strong in-stock data-backed recommendation was found."
         lines=[]
         for row,p in candidates[:2]:
