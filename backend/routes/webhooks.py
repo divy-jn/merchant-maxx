@@ -72,9 +72,12 @@ async def handle_razorpay_webhook(request: Request):
         "failure_reason": payment.get("error_description"), "razorpay_payment_id": rzp_payment_id,
         "initiated_at": received_at, "completed_at": received_at if status == "CAPTURED" else None
     }, on_conflict="payment_id").execute()
-    supabase.table("entity_mapping").upsert({
-        "synthetic_id": f"pay_{rzp_payment_id}", "entity_type": "payment", "razorpay_id": rzp_payment_id
-    }, on_conflict="merchant_id,entity_type,synthetic_id").execute()
+    try:
+        supabase.table("entity_mapping").insert({
+            "synthetic_id": f"pay_{rzp_payment_id}", "entity_type": "payment", "razorpay_id": rzp_payment_id
+        }).execute()
+    except Exception:
+        pass
 
     intent_id = order.get("purchase_intent_id")
     if intent_id:

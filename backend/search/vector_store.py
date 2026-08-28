@@ -60,7 +60,7 @@ def get_product_embedding(text: str) -> List[float]:
         return []
     return embeddings.embed_query(text)
 
-def search_products_vector(query: str, top_k: int = 5, category: Optional[str] = None) -> List[Dict[str, Any]]:
+def search_products_vector(query: str, top_k: int = 5, category: Optional[str] = None, namespace: str = "") -> List[Dict[str, Any]]:
     """Search for products using semantic vector search.
     Falls back to empty results if Pinecone or embeddings are unavailable."""
     if not pinecone_index or not embeddings:
@@ -79,7 +79,8 @@ def search_products_vector(query: str, top_k: int = 5, category: Optional[str] =
             vector=query_embedding,
             top_k=top_k,
             include_metadata=True,
-            filter=filter_dict if filter_dict else None
+            filter=filter_dict if filter_dict else None,
+            namespace=namespace
         )
         
         # Format results to match our catalog structure
@@ -96,7 +97,7 @@ def search_products_vector(query: str, top_k: int = 5, category: Optional[str] =
         print(f"Pinecone search error: {e}")
         return []
 
-def index_product(product_id: str, text_content: str, metadata: dict):
+def index_product(product_id: str, text_content: str, metadata: dict, namespace: str = ""):
     """Upsert a product into Pinecone"""
     if not pinecone_index or not embeddings:
         return
@@ -110,7 +111,8 @@ def index_product(product_id: str, text_content: str, metadata: dict):
                 "id": str(product_id),
                 "values": embedding,
                 "metadata": metadata
-            }]
+            }],
+            namespace=namespace
         )
     except Exception as e:
         print(f"Pinecone upsert error: {e}")

@@ -26,7 +26,7 @@ def _load_active_intent(conv_id: str):
 
 def _accept_latest_recommendation(intent: dict):
     rec_q = (supabase.table("recommendation_events").select("*").eq("session_id", intent["conversation_id"])
-             .eq("status", "GENERATED").order("shown_at", desc=True).limit(1).execute())
+             .in_("status", ["SHOWN", "CLICKED"]).order("shown_at", desc=True).limit(1).execute())
     rec = rec_q.data[0] if rec_q.data else None
     if not rec:
         return intent
@@ -43,7 +43,7 @@ def _accept_latest_recommendation(intent: dict):
         p = (supabase.table("products").select("price_paise").eq("product_id", item["product_id"]).maybe_single().execute()).data
         if p: subtotal += int(p["price_paise"]) * int(item.get("quantity", 1))
     now = datetime.now(timezone.utc).isoformat()
-    supabase.table("recommendation_events").update({"status": "ACCEPTED", "accepted_at": now}).eq("recommendation_id", rec["recommendation_id"]).eq("status", "GENERATED").execute()
+    supabase.table("recommendation_events").update({"status": "ACCEPTED", "accepted_at": now}).eq("recommendation_id", rec["recommendation_id"]).execute()
     supabase.table("purchase_intents").update({"basket": basket, "subtotal_paise": subtotal, "amount_paise": subtotal, "recommendation_id": rec["recommendation_id"], "purchase_state": "USER_CONFIRMED", "user_confirmed": True, "updated_at": now}).eq("purchase_intent_id", intent["purchase_intent_id"]).execute()
     return dict(intent, basket=basket, subtotal_paise=subtotal, amount_paise=subtotal, recommendation_id=rec["recommendation_id"], purchase_state="USER_CONFIRMED", user_confirmed=True)
 
@@ -81,6 +81,11 @@ async def chat_with_maxx(req: ChatRequest, current_user: dict = Depends(get_curr
         response = final_state["messages"][-1].content if final_state.get("messages") else "How can I help?"
         if isinstance(response, list):
             response = "".join(b.get("text", "") for b in response if isinstance(b, dict) and b.get("type") == "text") or str(response)
+        
+        now_str = datetime.now(timezone.utc).isoformat()
+        # Mark any GENERATED recommendations as SHOWN since they are now being delivered to the user
+        supabase.table("recommendation_events").update({"status": "SHOWN", "shown_at": now_str}).eq("session_id", conv_id).eq("status", "GENERATED").execute()
+        
         supabase.table("messages").insert({"conversation_id": conv_id, "role": "assistant", "content": str(response)}).execute()
         return ChatResponse(response=str(response), conversation_id=conv_id)
     except Exception as exc:

@@ -34,10 +34,14 @@ def scout_node(state: dict):
         from utils.supabase_client import supabase
         product = None
         if supabase:
-            result = (supabase.table("products").select("product_id,price_paise,active,inventory_qty")
-                      .eq("product_id", product_id).eq("merchant_id", "merchant_mxx_001")
-                      .maybe_single().execute())
-            product = result.data
+            try:
+                result = (supabase.table("products").select("product_id,price_paise,active,inventory_qty")
+                          .eq("product_id", product_id).eq("merchant_id", "merchant_mxx_001")
+                          .maybe_single().execute())
+                product = getattr(result, "data", None) if result else None
+            except Exception as e:
+                print(f"Error fetching product {product_id}: {e}")
+                product = None
         if not product or not product.get("active") or (product.get("inventory_qty") or 0) < 1:
             continue
         intent_id = f"pi_{uuid.uuid4().hex[:12]}"
