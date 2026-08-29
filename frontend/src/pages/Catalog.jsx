@@ -1,15 +1,19 @@
 import { useState, useEffect } from 'react';
 import { API_BASE_URL } from '../config';
+import { useAuth } from '../context/AuthContext';
 import './Catalog.css';
 
 export default function Catalog() {
+  const { token } = useAuth();
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    // Fetch products from our backend
-    fetch(`${API_BASE_URL}/catalog/`)
+    const headers = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    fetch(`${API_BASE_URL}/catalog/`, { headers })
       .then(res => {
         if (!res.ok) throw new Error('Failed to fetch catalog');
         return res.json();

@@ -1,15 +1,20 @@
 import { useState, useEffect } from 'react';
 import { ShieldCheck, ShieldAlert } from 'lucide-react';
 import { API_BASE_URL } from '../config';
+import { useAuth } from '../context/AuthContext';
 import './AuditTrail.css';
 
 export default function AuditTrail() {
+  const { token } = useAuth();
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    fetch(`${API_BASE_URL}/audit/`)
+    const headers = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    fetch(`${API_BASE_URL}/audit/`, { headers })
       .then(res => {
         if (!res.ok) throw new Error('Failed to fetch audit logs');
         return res.json();

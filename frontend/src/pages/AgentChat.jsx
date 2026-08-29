@@ -1,9 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
 import { Send, Trash2 } from 'lucide-react';
 import { API_BASE_URL } from '../config';
+import { useAuth } from '../context/AuthContext';
 import './AgentChat.css';
 
 export default function AgentChat({ sessionId = 'guest' }) {
+  const { token } = useAuth();
   const [currentConvId, setCurrentConvId] = useState(sessionId);
   const [messages, setMessages] = useState([
     { sender: 'bot', text: 'Hi! I\'m MAXX, your AI shopping assistant at Merchant Maxx. I can help you discover products, compare options, and complete purchases. What are you looking for today?' }
@@ -22,7 +24,10 @@ export default function AgentChat({ sessionId = 'guest' }) {
 
   // Load chat history on mount
   useEffect(() => {
-    fetch(`${API_BASE_URL}/chat/history?conversation_id=${currentConvId}`)
+    const headers = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    fetch(`${API_BASE_URL}/chat/history?conversation_id=${currentConvId}`, { headers })
       .then(res => res.json())
       .then(data => {
         if (data.length > 0) {
@@ -45,9 +50,12 @@ export default function AgentChat({ sessionId = 'guest' }) {
     setLoading(true);
 
     try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
       const res = await fetch(`${API_BASE_URL}/chat/`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ message: userMessage, conversation_id: currentConvId })
       });
       
@@ -64,7 +72,9 @@ export default function AgentChat({ sessionId = 'guest' }) {
   };
 
   const clearChat = async () => {
-    await fetch(`${API_BASE_URL}/chat/history?conversation_id=${currentConvId}`, { method: 'DELETE' });
+    const headers = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    await fetch(`${API_BASE_URL}/chat/history?conversation_id=${currentConvId}`, { method: 'DELETE', headers });
     setMessages([
       { sender: 'bot', text: 'Hi! I\'m MAXX, your AI shopping assistant at Merchant Maxx. What are you looking for today?' }
     ]);

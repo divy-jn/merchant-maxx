@@ -3,5 +3,11 @@
     "env": {
       "VITE_API_URL": "https://merchant-maxx-api-1066165000716.us-central1.run.app"
     }
-  }
+  },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
 }
