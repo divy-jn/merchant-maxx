@@ -14,3 +14,5 @@ upstash-redis
 pinecone
 langsmith
 pytest
+langchain-community
+langchain-litellm

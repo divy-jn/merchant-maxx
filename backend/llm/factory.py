@@ -1,6 +1,6 @@
 import logging
 from typing import List, Optional
-from langchain_community.chat_models import ChatLiteLLM
+from langchain_litellm import ChatLiteLLM
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from config import settings
