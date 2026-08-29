@@ -28,8 +28,11 @@ def list_catalog():
     try:
         response = items.list_items()
         return response.get('items', [])
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Internal Server Error")
 
 @router.get("/{item_id}", response_model=ProductResponse)
 @cached(ttl=3600)
@@ -46,5 +49,8 @@ def create_catalog_item(product: ProductCreate):
     try:
         amount_paise = int(product.price * 100)
         return items.create_item(product.name, product.description, amount_paise)
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Internal Server Error")

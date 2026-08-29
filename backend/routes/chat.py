@@ -88,9 +88,11 @@ def chat_with_maxx(req: ChatRequest, current_user: dict = Depends(get_current_us
         
         supabase.table("messages").insert({"conversation_id": conv_id, "role": "assistant", "content": str(response)}).execute()
         return ChatResponse(response=str(response), conversation_id=conv_id)
+    except HTTPException:
+        raise
     except Exception as exc:
         import traceback; traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="Internal Server Error")
 
 @router.get("/history")
 def get_chat_history(conversation_id: str = None, current_user: dict = Depends(get_current_user)):

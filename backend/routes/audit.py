@@ -36,5 +36,8 @@ def get_audit_log(log_id: str):
         return response.data[0]
     except HTTPException:
         raise
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Internal Server Error")

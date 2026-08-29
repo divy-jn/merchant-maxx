@@ -40,5 +40,8 @@ def get_latest_traces(limit: int = 10, current_user: dict = Depends(get_current_
             })
             
         return trace_data
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Internal Server Error")
