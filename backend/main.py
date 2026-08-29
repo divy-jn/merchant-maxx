@@ -23,10 +23,10 @@ app.add_middleware(GlobalErrorMiddleware)
 app.add_middleware(RateLimitMiddleware, max_requests=100, window_seconds=60)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[origin.strip() for origin in settings.CORS_ORIGINS.split(",")],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[origin.strip() for origin in settings.CORS_ORIGINS.split(",") if origin.strip()],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS", "DELETE", "PUT"],
+    allow_headers=["Content-Type", "Authorization", "Accept"],
 )
 
 app.include_router(auth.router)
