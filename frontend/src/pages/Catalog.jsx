@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { API_BASE_URL } from '../config';
 import './Catalog.css';
 
 export default function Catalog() {
@@ -8,7 +9,7 @@ export default function Catalog() {
 
   useEffect(() => {
     // Fetch products from our backend
-    fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8002'}/catalog/`)
+    fetch(`${API_BASE_URL}/catalog/`)
       .then(res => {
         if (!res.ok) throw new Error('Failed to fetch catalog');
         return res.json();

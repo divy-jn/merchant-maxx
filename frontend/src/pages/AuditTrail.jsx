@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { ShieldCheck, ShieldAlert } from 'lucide-react';
+import { API_BASE_URL } from '../config';
 import './AuditTrail.css';
 
 export default function AuditTrail() {
@@ -8,7 +9,7 @@ export default function AuditTrail() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8002'}/audit/`)
+    fetch(`${API_BASE_URL}/audit/`)
       .then(res => {
         if (!res.ok) throw new Error('Failed to fetch audit logs');
         return res.json();
