@@ -44,6 +44,29 @@ MODEL_REGISTRY: List[ModelConfig] = [
         capabilities=[Capability.EMBEDDINGS],
         litellm_model_name="gemini/text-embedding-004"
     ),
+    # GROQ MODELS
+    ModelConfig(
+        provider="groq",
+        model="llama-3.1-70b-versatile",
+        is_free=True,
+        capabilities=[Capability.TOOL_CALLING, Capability.STRUCTURED_OUTPUT],
+        litellm_model_name="groq/llama-3.1-70b-versatile"
+    ),
+    # OPENROUTER MODELS
+    ModelConfig(
+        provider="openrouter",
+        model="nemotron-3-ultra-550b-a55b:free",
+        is_free=True,
+        capabilities=[Capability.TOOL_CALLING, Capability.STRUCTURED_OUTPUT],
+        litellm_model_name="openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"
+    ),
+    ModelConfig(
+        provider="openrouter",
+        model="inkling:free",
+        is_free=True,
+        capabilities=[Capability.TOOL_CALLING, Capability.STRUCTURED_OUTPUT],
+        litellm_model_name="openrouter/thinkingmachines/inkling:free"
+    ),
 ]
 
 def get_model_config(provider: str, model: str = None) -> Optional[ModelConfig]:

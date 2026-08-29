@@ -18,6 +18,10 @@ def _instantiate_model(cfg: ModelConfig) -> ChatLiteLLM:
         api_base = settings.OLLAMA_BASE_URL
     elif cfg.provider.lower() == "gemini":
         api_key = settings.LLM_API_KEY
+    elif cfg.provider.lower() == "groq":
+        api_key = settings.GROQ_API_KEY
+    elif cfg.provider.lower() == "openrouter":
+        api_key = settings.OPENROUTER_API_KEY
     
     # We pass custom api_base if defined, else litellm handles it
     kwargs = {

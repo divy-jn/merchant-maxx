@@ -1,4 +1,8 @@
+import os
+from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 class Settings(BaseSettings):
     # LLM Settings
@@ -11,6 +15,8 @@ class Settings(BaseSettings):
     LLM_API_KEY: str = ""  # General fallback (e.g. Gemini)
     OLLAMA_API_KEY: str = ""
     OLLAMA_BASE_URL: str = "https://ollama.com/v1"
+    GROQ_API_KEY: str = ""
+    OPENROUTER_API_KEY: str = ""
 
     # Razorpay Settings
     RAZORPAY_KEY_ID: str = ""
@@ -33,7 +39,7 @@ class Settings(BaseSettings):
     JWT_SECRET: str = "merchant-maxx-secret-key-change-in-prod"
     JWT_EXPIRY_HOURS: int = 24
 
-    model_config = SettingsConfigDict(env_file="../.env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=str(BASE_DIR / ".env"), env_file_encoding="utf-8", extra="ignore")
 
 settings = Settings()
 
