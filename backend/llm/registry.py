@@ -14,58 +14,51 @@ class Capability(str, Enum):
 class ModelConfig(BaseModel):
     provider: str
     model: str
+    priority: int = 99
     is_free: bool = True
     capabilities: List[Capability] = []
-    # If the provider needs a specific litellm alias (like ollama/gpt-oss or gemini/gemini-1.5)
     litellm_model_name: str 
+    required_env: str = ""
 
 # Hardcoded registry of known models
 MODEL_REGISTRY: List[ModelConfig] = [
-    # OLLAMA CLOUD MODELS
-    ModelConfig(
-        provider="ollama",
-        model="gpt-oss:120b-cloud",
-        is_free=True,
-        capabilities=[Capability.TOOL_CALLING, Capability.STRUCTURED_OUTPUT],
-        litellm_model_name="ollama/gpt-oss:120b-cloud"
-    ),
     # GEMINI MODELS
     ModelConfig(
         provider="gemini",
-        model="gemini-3.6-flash",
-        is_free=True,  # Assuming generous free tier
-        capabilities=[Capability.TOOL_CALLING, Capability.VISION],
-        litellm_model_name="gemini/gemini-3.6-flash"
+        model="gemini-3.7-flash",
+        priority=1,
+        is_free=True,
+        capabilities=[Capability.TOOL_CALLING, Capability.STRUCTURED_OUTPUT],
+        litellm_model_name="gemini/gemini-3.7-flash",
+        required_env="LLM_API_KEY"
     ),
     ModelConfig(
         provider="gemini",
-        model="text-embedding-004",
+        model="gemini-3.6-flash",
+        priority=2,
         is_free=True,
-        capabilities=[Capability.EMBEDDINGS],
-        litellm_model_name="gemini/text-embedding-004"
+        capabilities=[Capability.TOOL_CALLING, Capability.VISION],
+        litellm_model_name="gemini/gemini-3.6-flash",
+        required_env="LLM_API_KEY"
     ),
-    # GROQ MODELS
     ModelConfig(
-        provider="groq",
-        model="llama-3.1-70b-versatile",
+        provider="gemini",
+        model="gemini-3.5-flash",
+        priority=3,
         is_free=True,
         capabilities=[Capability.TOOL_CALLING, Capability.STRUCTURED_OUTPUT],
-        litellm_model_name="groq/llama-3.1-70b-versatile"
+        litellm_model_name="gemini/gemini-3.5-flash",
+        required_env="LLM_API_KEY"
     ),
     # OPENROUTER MODELS
     ModelConfig(
         provider="openrouter",
         model="nemotron-3-ultra-550b-a55b:free",
+        priority=4,
         is_free=True,
         capabilities=[Capability.TOOL_CALLING, Capability.STRUCTURED_OUTPUT],
-        litellm_model_name="openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"
-    ),
-    ModelConfig(
-        provider="openrouter",
-        model="inkling:free",
-        is_free=True,
-        capabilities=[Capability.TOOL_CALLING, Capability.STRUCTURED_OUTPUT],
-        litellm_model_name="openrouter/thinkingmachines/inkling:free"
+        litellm_model_name="openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+        required_env="OPENROUTER_API_KEY"
     ),
 ]
 
