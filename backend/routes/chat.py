@@ -48,7 +48,7 @@ def _accept_latest_recommendation(intent: dict):
     return dict(intent, basket=basket, subtotal_paise=subtotal, amount_paise=subtotal, recommendation_id=rec["recommendation_id"], purchase_state="USER_CONFIRMED", user_confirmed=True)
 
 @router.post("/", response_model=ChatResponse)
-async def chat_with_maxx(req: ChatRequest, current_user: dict = Depends(get_current_user)):
+def chat_with_maxx(req: ChatRequest, current_user: dict = Depends(get_current_user)):
     if not supabase:
         raise HTTPException(status_code=503, detail="Supabase not configured")
     try:
@@ -93,18 +93,18 @@ async def chat_with_maxx(req: ChatRequest, current_user: dict = Depends(get_curr
         raise HTTPException(status_code=500, detail=str(exc))
 
 @router.get("/history")
-async def get_chat_history(conversation_id: str = None, current_user: dict = Depends(get_current_user)):
+def get_chat_history(conversation_id: str = None, current_user: dict = Depends(get_current_user)):
     if not supabase or not conversation_id or conversation_id == "guest": return []
     res = supabase.table("messages").select("*").eq("conversation_id", conversation_id).order("created_at", desc=False).execute()
     return [{"sender": "user" if m["role"] == "user" else "bot", "text": m["content"]} for m in res.data]
 
 @router.delete("/history")
-async def clear_chat_history(conversation_id: str, current_user: dict = Depends(get_current_user)):
+def clear_chat_history(conversation_id: str, current_user: dict = Depends(get_current_user)):
     if not supabase or not conversation_id or conversation_id == "guest": return {"status": "cleared"}
     supabase.table("conversations").delete().eq("id", conversation_id).execute()
     return {"status": "cleared"}
 
 @router.get("/conversations")
-async def list_conversations(current_user: dict = Depends(get_current_user)):
+def list_conversations(current_user: dict = Depends(get_current_user)):
     if not supabase or not current_user: return []
     return supabase.table("conversations").select("*").eq("user_id", current_user["user_id"]).order("updated_at", desc=True).execute().data

@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/audit", tags=["audit"])
 
 @router.get("/")
-async def get_audit_logs(limit: int = 50):
+def get_audit_logs(limit: int = 50):
     """Fetches recent audit logs from Supabase"""
     if not supabase:
         raise HTTPException(status_code=503, detail="Supabase not configured or connected.")
@@ -24,7 +24,7 @@ async def get_audit_logs(limit: int = 50):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/{log_id}")
-async def get_audit_log(log_id: str):
+def get_audit_log(log_id: str):
     """Fetches a specific audit log by ID"""
     if not supabase:
         raise HTTPException(status_code=503, detail="Supabase not configured.")

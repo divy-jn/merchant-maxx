@@ -23,7 +23,7 @@ class ProductResponse(BaseModel):
 
 @router.get("/", response_model=List[ProductResponse])
 @cached(ttl=300)
-async def list_catalog():
+def list_catalog():
     """Lists all products from Razorpay Items API"""
     try:
         response = items.list_items()
@@ -33,7 +33,7 @@ async def list_catalog():
 
 @router.get("/{item_id}", response_model=ProductResponse)
 @cached(ttl=3600)
-async def get_catalog_item(item_id: str):
+def get_catalog_item(item_id: str):
     """Gets a specific product from Razorpay Items API"""
     try:
         return items.fetch_item(item_id)
@@ -41,7 +41,7 @@ async def get_catalog_item(item_id: str):
         raise HTTPException(status_code=404, detail=f"Item not found: {str(e)}")
 
 @router.post("/", response_model=ProductResponse)
-async def create_catalog_item(product: ProductCreate):
+def create_catalog_item(product: ProductCreate):
     """Creates a new product in the Razorpay Catalog"""
     try:
         amount_paise = int(product.price * 100)

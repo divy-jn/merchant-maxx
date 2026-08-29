@@ -42,7 +42,7 @@ def create_access_token(data: dict) -> str:
     return encoded_jwt
 
 @router.post("/register", response_model=AuthResponse)
-async def register(req: RegisterRequest):
+def register(req: RegisterRequest):
     """Register a new user (customer or merchant)"""
     if not supabase:
         raise HTTPException(status_code=503, detail="Supabase not configured")
@@ -81,7 +81,7 @@ async def register(req: RegisterRequest):
     )
 
 @router.post("/login", response_model=AuthResponse)
-async def login(req: LoginRequest):
+def login(req: LoginRequest):
     """Login and get a JWT token"""
     if not supabase:
         raise HTTPException(status_code=503, detail="Supabase not configured")
@@ -111,7 +111,7 @@ async def login(req: LoginRequest):
     )
 
 @router.get("/me")
-async def get_me(current_user: dict = Depends(get_current_user)):
+def get_me(current_user: dict = Depends(get_current_user)):
     """Get current user info from JWT"""
     if not current_user:
         raise HTTPException(status_code=401, detail="Invalid or missing session token")

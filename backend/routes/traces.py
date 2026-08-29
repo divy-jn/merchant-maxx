@@ -12,7 +12,7 @@ except:
     client = None
 
 @router.get("/latest")
-async def get_latest_traces(limit: int = 10, current_user: dict = Depends(get_current_user)):
+def get_latest_traces(limit: int = 10, current_user: dict = Depends(get_current_user)):
     """Fetch the latest Agent traces from LangSmith for the frontend Trace Viewer"""
     if not client:
         raise HTTPException(status_code=503, detail="LangSmith client not initialized. Check LANGSMITH_API_KEY.")

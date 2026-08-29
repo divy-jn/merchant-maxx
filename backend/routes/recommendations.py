@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/recommendations", tags=["recommendations"])
 
 @router.post("/{rec_id}/shown")
-async def mark_shown(rec_id: str):
+def mark_shown(rec_id: str):
     if not supabase:
         return {"status": "skipped", "reason": "No DB"}
     try:
@@ -19,7 +19,7 @@ async def mark_shown(rec_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/{rec_id}/clicked")
-async def mark_clicked(rec_id: str):
+def mark_clicked(rec_id: str):
     if not supabase:
         return {"status": "skipped"}
     try:
@@ -29,7 +29,7 @@ async def mark_clicked(rec_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/{rec_id}/accepted")
-async def mark_accepted(rec_id: str):
+def mark_accepted(rec_id: str):
     if not supabase:
         return {"status": "skipped"}
     try:
@@ -39,7 +39,7 @@ async def mark_accepted(rec_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/{rec_id}/dismissed")
-async def mark_dismissed(rec_id: str):
+def mark_dismissed(rec_id: str):
     if not supabase:
         return {"status": "skipped"}
     try:
