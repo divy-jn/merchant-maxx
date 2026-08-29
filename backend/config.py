@@ -2,10 +2,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     # LLM Settings
-    LLM_PROVIDER: str = "gemini"
-    LLM_MODEL: str = "gemini-3.6-flash"
-    LLM_API_KEY: str = ""
-    LLM_BASE_URL: str | None = None
+    LLM_PRIMARY_PROVIDER: str = "ollama"
+    LLM_PRIMARY_MODEL: str = "gpt-oss:120b-cloud"
+    LLM_FALLBACK_PROVIDERS: str = "gemini"
+    ALLOW_PAID_LLM: bool = False
+    
+    # Provider Credentials
+    LLM_API_KEY: str = ""  # General fallback (e.g. Gemini)
+    OLLAMA_API_KEY: str = ""
+    OLLAMA_BASE_URL: str = "https://ollama.com/v1"
 
     # Razorpay Settings
     RAZORPAY_KEY_ID: str = ""

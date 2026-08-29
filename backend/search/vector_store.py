@@ -1,25 +1,13 @@
 import os
 from typing import List, Dict, Any, Optional
 from pinecone import Pinecone
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from config import settings
 
 # Initialize Pinecone
 pc = Pinecone(api_key=os.environ.get("PINECONE_API_KEY", ""))
-index_name = "merchant-maxx"
-
-# gemini-embedding-001 outputs 3072 dimensions
-EMBEDDING_DIMENSION = 3072
-
-# Initialize Google Embeddings
-embeddings = None
-try:
-    embeddings = GoogleGenerativeAIEmbeddings(
-        model="models/gemini-embedding-001", 
-        google_api_key=settings.LLM_API_KEY
-    )
-except Exception as e:
-    print(f"Failed to initialize embeddings: {e}")
+index_name = "merchant-maxx-v2"
+EMBEDDING_MODEL = "multilingual-e5-large"
+EMBEDDING_DIMENSION = 1024
 
 def init_pinecone():
     """Ensure the index exists with correct dimensions"""
@@ -54,16 +42,24 @@ def init_pinecone():
 
 pinecone_index = init_pinecone()
 
-def get_product_embedding(text: str) -> List[float]:
-    """Get embedding for a text string"""
-    if not embeddings:
+def get_product_embedding(text: str, is_query: bool = True) -> List[float]:
+    """Get embedding for a text string using Pinecone Inference"""
+    try:
+        input_type = "query" if is_query else "passage"
+        res = pc.inference.embed(
+            model=EMBEDDING_MODEL,
+            inputs=[text],
+            parameters={"input_type": input_type, "truncate": "END"}
+        )
+        return res[0].values
+    except Exception as e:
+        print(f"Embedding error: {e}")
         return []
-    return embeddings.embed_query(text)
 
 def search_products_vector(query: str, top_k: int = 5, category: Optional[str] = None, namespace: str = "") -> List[Dict[str, Any]]:
     """Search for products using semantic vector search.
     Falls back to empty results if Pinecone or embeddings are unavailable."""
-    if not pinecone_index or not embeddings:
+    if not pinecone_index:
         return []
         
     try:
@@ -99,11 +95,11 @@ def search_products_vector(query: str, top_k: int = 5, category: Optional[str] =
 
 def index_product(product_id: str, text_content: str, metadata: dict, namespace: str = ""):
     """Upsert a product into Pinecone"""
-    if not pinecone_index or not embeddings:
+    if not pinecone_index:
         return
         
     try:
-        embedding = get_product_embedding(text_content)
+        embedding = get_product_embedding(text_content, is_query=False)
         if not embedding:
             return
         pinecone_index.upsert(

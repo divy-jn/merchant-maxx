@@ -4,6 +4,7 @@ import { API_BASE_URL } from '../config';
 import './AgentChat.css';
 
 export default function AgentChat({ sessionId = 'guest' }) {
+  const [currentConvId, setCurrentConvId] = useState(sessionId);
   const [messages, setMessages] = useState([
     { sender: 'bot', text: 'Hi! I\'m MAXX, your AI shopping assistant at Merchant Maxx. I can help you discover products, compare options, and complete purchases. What are you looking for today?' }
   ]);
@@ -21,7 +22,7 @@ export default function AgentChat({ sessionId = 'guest' }) {
 
   // Load chat history on mount
   useEffect(() => {
-    fetch(`${API_BASE_URL}/chat/history?session_id=${sessionId}`)
+    fetch(`${API_BASE_URL}/chat/history?conversation_id=${currentConvId}`)
       .then(res => res.json())
       .then(data => {
         if (data.length > 0) {
@@ -32,7 +33,7 @@ export default function AgentChat({ sessionId = 'guest' }) {
         }
       })
       .catch(() => {}); // Silently fail if no history
-  }, [sessionId]);
+  }, [currentConvId]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -47,10 +48,13 @@ export default function AgentChat({ sessionId = 'guest' }) {
       const res = await fetch(`${API_BASE_URL}/chat/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMessage, session_id: sessionId })
+        body: JSON.stringify({ message: userMessage, conversation_id: currentConvId })
       });
       
       const data = await res.json();
+      if (data.conversation_id && data.conversation_id !== currentConvId) {
+        setCurrentConvId(data.conversation_id);
+      }
       setMessages(prev => [...prev, { sender: 'bot', text: data.response || 'Sorry, something went wrong.' }]);
     } catch (err) {
       setMessages(prev => [...prev, { sender: 'bot', text: 'Connection error. Please try again.' }]);
@@ -60,7 +64,7 @@ export default function AgentChat({ sessionId = 'guest' }) {
   };
 
   const clearChat = async () => {
-    await fetch(`${API_BASE_URL}/chat/history?session_id=${sessionId}`, { method: 'DELETE' });
+    await fetch(`${API_BASE_URL}/chat/history?conversation_id=${currentConvId}`, { method: 'DELETE' });
     setMessages([
       { sender: 'bot', text: 'Hi! I\'m MAXX, your AI shopping assistant at Merchant Maxx. What are you looking for today?' }
     ]);

@@ -1,5 +1,6 @@
 from langchain_core.messages import SystemMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
+from llm.factory import get_chat_model
+from llm.registry import Capability
 from config import settings
 from .tools import CAMPAIGNER_TOOLS
 
@@ -10,7 +11,7 @@ Never reveal internal agent names or architecture to customers.
 """
 
 def get_llm():
-    return ChatGoogleGenerativeAI(model=settings.LLM_MODEL, google_api_key=settings.LLM_API_KEY)
+    return get_chat_model([Capability.TOOL_CALLING])
 
 def campaigner_node(state: dict):
     messages = list(state.get("messages", []))

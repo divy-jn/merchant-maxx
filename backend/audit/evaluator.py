@@ -1,4 +1,5 @@
-from langchain_google_genai import ChatGoogleGenerativeAI
+from llm.factory import get_chat_model
+from llm.registry import Capability
 from langchain_core.messages import SystemMessage, HumanMessage
 from config import settings
 import logging
@@ -15,7 +16,7 @@ Respond ONLY with a JSON object in this format:
 def evaluate_decision_with_llm(action_intent: dict, context: str = "") -> dict:
     """Uses LLM to evaluate complex safety rules (Rule 03, Rule 04)"""
     try:
-        llm = ChatGoogleGenerativeAI(model=settings.LLM_MODEL, google_api_key=settings.LLM_API_KEY)
+        llm = get_chat_model([Capability.TOOL_CALLING])
         messages = [
             SystemMessage(content=eval_prompt),
             HumanMessage(content=f"Action Intent: {action_intent}\nContext: {context}")
