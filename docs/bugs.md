@@ -81,7 +81,7 @@
 - **Fix:** Changed model to `models/gemini-embedding-001`. Added keyword search fallback in `tools.py`.
 
 ### BUG-B27: Frontend-Backend Chat Contract Mismatch
-- **Status:** 🔴 Open
+- **Status:** dYY Fixed
 - **Severity:** High
 - **Found:** 2026-08-27
 - **Component:** Frontend (`AgentChat.jsx`) ↔ Backend (`routes/chat.py`)
@@ -101,7 +101,7 @@
 - **Fix:** Set `--min-instances=1` or add frontend retry/loading spinner.
 
 ### BUG-B29: CORS OPTIONS Returns 400
-- **Status:** 🟡 Open
+- **Status:** dYY Fixed
 - **Severity:** Medium
 - **Found:** 2026-08-27
 - **Component:** Backend (`main.py` middleware)
@@ -119,7 +119,7 @@
 - **Fix:** Added auto-detection: deletes and recreates index on dimension mismatch.
 
 ### BUG-B31: Empty Files (Login.jsx, AgentTrace.jsx, AuthContext.jsx)
-- **Status:** 🟡 Open
+- **Status:** dYY Fixed
 - **Severity:** Medium
 - **Found:** 2026-08-27
 - **Component:** Frontend
@@ -127,14 +127,14 @@
 - **Fix:** Regenerate from git history or rewrite.
 
 ### BUG-B32: `fix_urls.py` Left in Repo Root
-- **Status:** 🟡 Open
+- **Status:** dYY Fixed
 - **Severity:** Low
 - **Found:** 2026-08-27
 - **Component:** Repository hygiene
 - **Fix:** Delete the file or add to `.gitignore`.
 
 ### BUG-B33: Cloud Run Still Uses Old Embedding Model
-- **Status:** 🔴 Open (needs redeploy)
+- **Status:** dYY Fixed
 - **Severity:** Critical
 - **Found:** 2026-08-27
 - **Component:** Infrastructure
@@ -152,7 +152,7 @@
 - **Fix:** Update the Current Status section with actual project state.
 
 ### BUG-B35: Frontend Doesn't Send JWT Auth Token
-- **Status:** 🔴 Open
+- **Status:** dYY Fixed
 - **Severity:** High
 - **Found:** 2026-08-27
 - **Component:** Frontend (all pages)
@@ -184,7 +184,7 @@
 - **Fix:** Verify if keys are real, rotate if needed, replace with placeholder values.
 
 ### BUG-B39: No SPA Fallback on Vercel
-- **Status:** 🟡 Open
+- **Status:** dYY Fixed
 - **Severity:** Low
 - **Found:** 2026-08-27
 - **Component:** Frontend (Vercel deployment)
