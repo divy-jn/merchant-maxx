@@ -22,8 +22,16 @@ CONFIRM_RE = re.compile(r"^(yes|y|yeah|yep|sure|okay|ok|proceed|go ahead|do it|c
 def verify_conversation_ownership(conv_id: str, current_user: dict):
     if not conv_id or conv_id == "guest":
         return
-    conv_q = supabase.table("conversations").select("user_id").eq("id", conv_id).maybe_single().execute()
-    conv = conv_q.data if conv_q else None
+    try:
+        conv_q = supabase.table("conversations").select("user_id").eq("id", conv_id).maybe_single().execute()
+        conv = conv_q.data if conv_q else None
+    except Exception as e:
+        # Check if it is a postgrest APIError for invalid UUID
+        if hasattr(e, 'code') and getattr(e, 'code') == '22P02':
+            raise HTTPException(status_code=400, detail="Invalid conversation ID format")
+        if '22P02' in str(e):
+            raise HTTPException(status_code=400, detail="Invalid conversation ID format")
+        raise e
     
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
