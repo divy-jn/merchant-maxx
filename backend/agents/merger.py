@@ -64,7 +64,12 @@ def merger_node(state: dict):
         state_update["purchase_state"] = next_state
         if ctx.get("purchase_intent_id") and supabase:
             try:
-                supabase.table("purchase_intents").update({"purchase_state": next_state}).eq("purchase_intent_id", ctx["purchase_intent_id"]).execute()
+                res = supabase.table("purchase_intents").update({
+                    "purchase_state": next_state
+                }).eq("purchase_intent_id", ctx["purchase_intent_id"]).in_("purchase_state", ["IDLE", "PRODUCT_SELECTED", "RECOMMENDATION_SHOWN", "PURCHASE_PENDING", "RECOVERY_PENDING"]).execute()
+                
+                if not res.data:
+                    logger.warning("Merger atomic update failed for intent %s (likely advanced by webhook or locked).", ctx["purchase_intent_id"])
             except Exception as e:
                 logger.error("Merger failed to sync state to DB: %s", e)
 

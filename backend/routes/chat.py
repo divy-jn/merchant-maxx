@@ -68,7 +68,28 @@ def _accept_latest_recommendation(intent: dict):
         if p: subtotal += int(p["price_paise"]) * int(item.get("quantity", 1))
     now = datetime.now(timezone.utc).isoformat()
     supabase.table("recommendation_events").update({"status": "ACCEPTED", "accepted_at": now}).eq("recommendation_id", rec["recommendation_id"]).execute()
-    supabase.table("purchase_intents").update({"basket": basket, "subtotal_paise": subtotal, "amount_paise": subtotal, "recommendation_id": rec["recommendation_id"], "purchase_state": "USER_CONFIRMED", "user_confirmed": True, "confirmed_basket": basket, "confirmed_amount_paise": subtotal, "confirmation_timestamp": now, "updated_at": now}).eq("purchase_intent_id", intent["purchase_intent_id"]).execute()
+    
+    # ── ATOMIC CONDITIONAL UPDATE ──
+    # Prevents downgrading a terminal PAYMENT_SUCCESS if a webhook resolved it concurrently.
+    res = supabase.table("purchase_intents").update({
+        "basket": basket, 
+        "subtotal_paise": subtotal, 
+        "amount_paise": subtotal, 
+        "recommendation_id": rec["recommendation_id"], 
+        "purchase_state": "USER_CONFIRMED", 
+        "user_confirmed": True, 
+        "confirmed_basket": basket, 
+        "confirmed_amount_paise": subtotal, 
+        "confirmation_timestamp": now, 
+        "updated_at": now
+    }).eq("purchase_intent_id", intent["purchase_intent_id"]).neq("purchase_state", "PAYMENT_SUCCESS").execute()
+    
+    if not res.data:
+        # If the update failed, it was likely locked or succeeded already. We reload to avoid returning stale state.
+        fresh_intent = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent["purchase_intent_id"]).maybe_single().execute()
+        if fresh_intent and fresh_intent.data:
+            return fresh_intent.data
+
     return dict(intent, basket=basket, subtotal_paise=subtotal, amount_paise=subtotal, recommendation_id=rec["recommendation_id"], purchase_state="USER_CONFIRMED", user_confirmed=True, confirmed_basket=basket, confirmed_amount_paise=subtotal)
 
 @router.post("/", response_model=ChatResponse)
@@ -93,8 +114,22 @@ def chat_with_maxx(req: ChatRequest, current_user: dict = Depends(get_current_us
                 intent = _accept_latest_recommendation(intent)
             else:
                 now = datetime.now(timezone.utc).isoformat()
-                supabase.table("purchase_intents").update({"user_confirmed": True, "purchase_state": "USER_CONFIRMED", "confirmed_basket": intent.get("basket"), "confirmed_amount_paise": intent.get("amount_paise"), "confirmation_timestamp": now, "updated_at": now}).eq("purchase_intent_id", intent["purchase_intent_id"]).execute()
-                intent = dict(intent, user_confirmed=True, purchase_state="USER_CONFIRMED", confirmed_basket=intent.get("basket"), confirmed_amount_paise=intent.get("amount_paise"))
+                res = supabase.table("purchase_intents").update({
+                    "user_confirmed": True, 
+                    "purchase_state": "USER_CONFIRMED", 
+                    "confirmed_basket": intent.get("basket"), 
+                    "confirmed_amount_paise": intent.get("amount_paise"), 
+                    "confirmation_timestamp": now, 
+                    "updated_at": now
+                }).eq("purchase_intent_id", intent["purchase_intent_id"]).in_("purchase_state", ["PURCHASE_PENDING", "RECOMMENDATION_SHOWN"]).execute()
+                
+                if res.data:
+                    intent = dict(intent, user_confirmed=True, purchase_state="USER_CONFIRMED", confirmed_basket=intent.get("basket"), confirmed_amount_paise=intent.get("amount_paise"))
+                else:
+                    # Update failed due to atomic guard, reload intent
+                    fresh = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent["purchase_intent_id"]).maybe_single().execute()
+                    if fresh and fresh.data:
+                        intent = fresh.data
 
         context, purchase_state, user_confirmed = {}, "IDLE", False
         if intent:

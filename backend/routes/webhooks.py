@@ -199,7 +199,7 @@ async def handle_razorpay_webhook(request: Request):
                     "status": target_status,
                     "fulfillment_status": fulfillment_status,
                     "updated_at": received_at
-                }).eq("order_id", order["order_id"]).execute()
+                }).eq("order_id", order["order_id"]).neq("status", "CAPTURED").execute()
             
             # If the update succeeded and we are transitioning to success
             if update_res.data and target_status == "CAPTURED" and order:

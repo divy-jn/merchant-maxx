@@ -267,7 +267,7 @@ def create_razorpay_order(state: Annotated[dict, InjectedState], customer_email:
             logger.error("CRITICAL GHOST ORDER AVOIDANCE: Local order mapping failed for intent %s, rzp_order %s: %s", intent_id, rzp_order["id"], exc)
             # Revert the intent state back to USER_CONFIRMED since we cannot proceed safely
             try:
-                supabase.table("purchase_intents").update({"purchase_state": "USER_CONFIRMED", "razorpay_order_id": None}).eq("purchase_intent_id", intent_id).execute()
+                supabase.table("purchase_intents").update({"purchase_state": "USER_CONFIRMED", "razorpay_order_id": None}).eq("purchase_intent_id", intent_id).in_("purchase_state", ["ORDER_CREATING", "PAYMENT_PENDING"]).execute()
             except Exception as rollback_exc:
                 logger.error("Failed to rollback intent state for %s: %s", intent_id, rollback_exc)
             return "Order creation failed due to an internal error while mapping data. Please try again."
@@ -329,16 +329,17 @@ def check_payment_status(state: Annotated[dict, InjectedState]) -> str:
                     "razorpay_payment_id": captured.get("id"),
                     "payment_updated_at": now,
                     "updated_at": now
-                }).eq("purchase_intent_id", iid).execute()
+                }).eq("purchase_intent_id", iid).neq("purchase_state", "PAYMENT_SUCCESS").execute()
             return f"PAYMENT_SUCCESS: {rid} has a captured payment."
 
         if ps and all(p.get("status") == "failed" for p in ps):
             if db_state != "PAYMENT_FAILED" and can_transition(db_state, "PAYMENT_FAILED"):
+                # Atomic guard: do not downgrade if a late capture webhook processed this into PAYMENT_SUCCESS
                 supabase.table("purchase_intents").update({
                     "purchase_state": "PAYMENT_FAILED",
                     "payment_updated_at": now,
                     "updated_at": now
-                }).eq("purchase_intent_id", iid).execute()
+                }).eq("purchase_intent_id", iid).neq("purchase_state", "PAYMENT_SUCCESS").execute()
             return f"PAYMENT_FAILED: {rid} has only failed payments. Do not retry this intent."
 
         return f"PAYMENT_PENDING: {rid} requires further inspection."
