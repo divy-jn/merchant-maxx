@@ -7,6 +7,7 @@ from agents.maxx import maxx_app
 from langchain_core.messages import HumanMessage
 from utils.supabase_client import supabase
 from middleware.auth_middleware import get_current_user
+from utils.telemetry import AgentTelemetryHandler
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 class ChatRequest(BaseModel):
@@ -20,7 +21,7 @@ CONFIRM_RE = re.compile(r"^(yes|y|yeah|yep|sure|okay|ok|proceed|go ahead|do it|c
 
 def _load_active_intent(conv_id: str):
     result = (supabase.table("purchase_intents").select("*").eq("conversation_id", conv_id)
-              .in_("purchase_state", ["PURCHASE_PENDING", "RECOMMENDATION_SHOWN", "USER_CONFIRMED", "RECOVERY_PENDING", "PAYMENT_FAILED", "PAYMENT_UNKNOWN"])
+              .in_("purchase_state", ["PURCHASE_PENDING", "RECOMMENDATION_SHOWN", "USER_CONFIRMED", "RECOVERY_PENDING", "PAYMENT_FAILED", "PAYMENT_UNKNOWN", "PRODUCT_SELECTED"])
               .order("created_at", desc=True).limit(1).execute())
     return result.data[0] if result.data else None
 
@@ -74,10 +75,12 @@ def chat_with_maxx(req: ChatRequest, current_user: dict = Depends(get_current_us
             purchase_state = intent.get("purchase_state", "PURCHASE_PENDING")
             user_confirmed = bool(intent.get("user_confirmed"))
             context = {"purchase_intent_id": intent["purchase_intent_id"], "basket_items": intent.get("basket") or [], "amount_paise": int(intent.get("amount_paise") or 0), "intent_description": "Persisted purchase intent"}
+        
+        telemetry = AgentTelemetryHandler(conv_id)
         final_state = maxx_app.invoke({"messages": [HumanMessage(content=req.message)], "session_id": conv_id,
                                        "customer_id": (intent or {}).get("customer_id") or (current_user or {}).get("customer_id", ""),
                                        "purchase_state": purchase_state, "purchase_context": context, "user_confirmed": user_confirmed},
-                                      config={"configurable": {"thread_id": conv_id}})
+                                      config={"configurable": {"thread_id": conv_id}, "recursion_limit": 15, "callbacks": [telemetry]})
         response = final_state["messages"][-1].content if final_state.get("messages") else "How can I help?"
         if isinstance(response, list):
             response = "".join(b.get("text", "") for b in response if isinstance(b, dict) and b.get("type") == "text") or str(response)
