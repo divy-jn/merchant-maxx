@@ -1,9 +1,12 @@
-from langchain_core.messages import SystemMessage
+import logging
+from langchain_core.messages import SystemMessage, ToolMessage
 from llm.factory import get_chat_model
 from llm.registry import Capability
 from config import settings
 from .tools import SCOUT_TOOLS
 import uuid
+
+logger = logging.getLogger(__name__)
 
 scout_prompt = """You are MAXX, the AI shopping assistant for Merchant Maxx.
 Help customers discover products and build a purchase intent.
@@ -16,8 +19,23 @@ Rules:
 5. Never authorize payment, and never generate payment links. Keep responses concise and friendly.
 """
 
+MAX_QUANTITY = 99  # Sane upper bound
+
 def get_llm():
     return get_chat_model([Capability.TOOL_CALLING])
+
+
+def _extract_product_ids_from_history(messages: list) -> set:
+    """Scan ToolMessage results for product IDs that were actually shown to the user.
+    Returns the set of product IDs found in search_catalog / get_product_details results."""
+    import re
+    ids = set()
+    id_pattern = re.compile(r"(?:ID:\s*|Product ID:\s*)(item_\w+)", re.IGNORECASE)
+    for msg in messages:
+        if isinstance(msg, ToolMessage):
+            content = str(getattr(msg, "content", ""))
+            ids.update(id_pattern.findall(content))
+    return ids
 
 
 def scout_node(state: dict):
@@ -36,6 +54,14 @@ def scout_node(state: dict):
         product_id = tc["args"].get("product_id")
         if not product_id:
             continue
+
+        # ── Deterministic guard: product must have appeared in prior tool results ──
+        known_ids = _extract_product_ids_from_history(messages)
+        if known_ids and product_id not in known_ids:
+            logger.warning("Scout tried to stage product %s not found in conversation history %s — blocking",
+                           product_id, known_ids)
+            continue
+
         # Never trust the model for the authoritative price.
         from utils.supabase_client import supabase
         product = None
@@ -46,11 +72,18 @@ def scout_node(state: dict):
                           .maybe_single().execute())
                 product = getattr(result, "data", None) if result else None
             except Exception as e:
-                print(f"Error fetching product {product_id}: {e}")
+                logger.error("Error fetching product %s: %s", product_id, e)
                 product = None
-        quantity = int(tc["args"].get("quantity", 1))
+
+        # ── Quantity validation ──
+        try:
+            quantity = int(tc["args"].get("quantity", 1))
+        except (ValueError, TypeError):
+            quantity = 1
         if quantity < 1:
             quantity = 1
+        if quantity > MAX_QUANTITY:
+            quantity = MAX_QUANTITY
 
         if not product or not product.get("active") or (product.get("inventory_qty") or 0) < quantity:
             continue
