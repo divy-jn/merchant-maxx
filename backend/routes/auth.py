@@ -38,7 +38,7 @@ def create_access_token(data: dict) -> str:
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(hours=24)
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, getattr(settings, 'JWT_SECRET', '[MASKED_JWT_SECRET]'), algorithm="HS256")
+    encoded_jwt = jwt.encode(to_encode, settings.jwt_secret_key, algorithm="HS256")
     return encoded_jwt
 
 @router.post("/register", response_model=AuthResponse)
@@ -120,6 +120,6 @@ def get_me(current_user: dict = Depends(get_current_user)):
 def get_user_from_session(token: str) -> Optional[dict]:
     """Helper used by other routes to validate session token manually if needed"""
     try:
-        return jwt.decode(token, getattr(settings, 'JWT_SECRET', '[MASKED_JWT_SECRET]'), algorithms=["HS256"])
+        return jwt.decode(token, settings.jwt_secret_key, algorithms=["HS256"])
     except:
         return None

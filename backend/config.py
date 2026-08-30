@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     # Razorpay Settings
     RAZORPAY_KEY_ID: str = ""
     RAZORPAY_KEY_SECRET: str = ""
+    RAZORPAY_WEBHOOK_SECRET: str = ""
 
     # Supabase Settings
     SUPABASE_URL: str = ""
@@ -32,10 +33,16 @@ class Settings(BaseSettings):
     # App Settings
     APP_ENV: str = "development"
     CORS_ORIGINS: str = "http://localhost:5173"
-    JWT_SECRET: str = "merchant-maxx-secret-key-change-in-prod"
+    JWT_SECRET: str = ""
     JWT_EXPIRY_HOURS: int = 24
 
     model_config = SettingsConfigDict(env_file=str(BASE_DIR / ".env"), env_file_encoding="utf-8", extra="ignore")
+
+    @property
+    def jwt_secret_key(self) -> str:
+        if self.APP_ENV == "production" and not self.JWT_SECRET:
+            raise ValueError("JWT_SECRET environment variable must be set in production")
+        return self.JWT_SECRET or "[MASKED_JWT_SECRET]"
 
 settings = Settings()
 

@@ -32,18 +32,16 @@ def merger_node(state: dict):
             state_update["purchase_context"] = ctx
             state_update["user_confirmed"] = False
 
-    # 2. Booster conflict detection: Booster must NOT override Scout's product
+    # 2. Booster conflict detection: Booster must NOT override Scout's products
     #    Booster result may contain a recommended product_id, but it is advisory.
     #    If Booster somehow tried to stage a different product, we log and ignore.
-    scout_product = None
-    if ctx and ctx.get("basket_items"):
-        scout_product = ctx["basket_items"][0].get("product_id")
+    scout_product_ids = [item.get("product_id") for item in ctx.get("basket_items", [])]
     
     booster_product = booster_res.get("product_id")  # Not normally set, but guard anyway
-    if booster_product and scout_product and booster_product != scout_product:
+    if booster_product and scout_product_ids and booster_product not in scout_product_ids:
         logger.warning(
-            "Merger conflict: Booster tried to set product %s but Scout's authoritative product is %s — ignoring Booster product",
-            booster_product, scout_product
+            "Merger conflict: Booster tried to set product %s but Scout's authoritative products are %s — ignoring Booster product",
+            booster_product, scout_product_ids
         )
         # Do NOT apply Booster's product override
 

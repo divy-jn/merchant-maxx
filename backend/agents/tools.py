@@ -58,16 +58,19 @@ def get_product_details(item_id: str):
         return "Unable to fetch product details at this time."
 
 @tool
-def stage_purchase_intent(product_id: str, amount_paise: int, quantity: int = 1) -> str:
-    """Stage a product for checkout; this never authorizes payment. Pass the requested quantity if specified."""
-    return f"Purchase intent staged for {quantity}x {product_id}. Await explicit confirmation."
+def stage_purchase_intent(product_id: str, quantity: int = 1) -> str:
+    """Stage a product for checkout, add to cart, or modify quantity. This never authorizes payment. 
+    Set quantity=0 to remove the product from the basket.
+    Pass the requested quantity if specified."""
+    return f"Cart modification requested for {quantity}x {product_id}."
 
 @tool
 def fetch_recommendations(state: Annotated[dict, InjectedState], customer_id: str = None, category: str = None) -> str:
     """Return evidence-backed cross-sell recommendations and record their lifecycle."""
     ctx = state.get("purchase_context", {}); basket = ctx.get("basket_items", [])
     if not basket or not supabase: return "No data-backed recommendations are currently available."
-    product_id = basket[0]["product_id"]
+    # Use the last item added for recommendations
+    product_id = basket[-1]["product_id"]
     try:
         rows = supabase.table("product_affinity").select("*").eq("product_id", product_id).order("lift_score", desc=True).limit(5).execute().data or []
         candidates = []
@@ -121,9 +124,10 @@ def create_razorpay_order(state: Annotated[dict, InjectedState], customer_email:
     intent_id = ctx.get("purchase_intent_id")
     if not intent_id: return "Order blocked: missing purchase_intent_id."
     try:
-        intent = (supabase.table("purchase_intents")
+        intent_res = (supabase.table("purchase_intents")
                   .select("*").eq("purchase_intent_id", intent_id)
-                  .maybe_single().execute()).data
+                  .maybe_single().execute())
+        intent = getattr(intent_res, "data", None) if intent_res else None
         if not intent:
             return "Order blocked: purchase intent not found."
 
@@ -136,9 +140,23 @@ def create_razorpay_order(state: Annotated[dict, InjectedState], customer_email:
                     f"Amount: Rs.{int(intent.get('amount_paise') or 0)/100:,.2f}\n"
                     f"Payment is pending; verify Razorpay status before treating it as successful.")
 
-        basket = intent.get("basket") or []
         if intent.get("purchase_state") != "USER_CONFIRMED" or not intent.get("user_confirmed"):
             return "Order blocked by Guardian: explicit confirmation is required."
+
+        # ── Atomically reserve the intent ──
+        now = datetime.now(timezone.utc).isoformat()
+        res = (supabase.table("purchase_intents")
+               .update({"purchase_state": "ORDER_CREATING", "updated_at": now})
+               .eq("purchase_intent_id", intent_id)
+               .eq("purchase_state", "USER_CONFIRMED")
+               .execute())
+        
+        if not res.data:
+            return "Order creation blocked: intent state changed concurrently. Please try again."
+        
+        # Use the securely locked snapshot from the DB
+        intent = res.data[0]
+        basket = intent.get("basket") or []
 
         # Check for existing local orders (DB-level backup for race condition)
         existing = supabase.table("orders").select("order_id").eq("purchase_intent_id", intent_id).limit(1).execute().data or []
@@ -149,7 +167,7 @@ def create_razorpay_order(state: Annotated[dict, InjectedState], customer_email:
                             int(intent.get("amount_paise") or 0))
 
         if not basket:
-            return "Order blocked: empty basket."
+            raise GuardianException("empty basket.")
 
         # ── Server-side basket re-validation ──
         subtotal = 0
@@ -157,11 +175,12 @@ def create_razorpay_order(state: Annotated[dict, InjectedState], customer_email:
         for entry in basket:
             pid = entry["product_id"]
             qty = int(entry.get("quantity", 1))
-            p = (supabase.table("products").select("*")
+            p_res = (supabase.table("products").select("*")
                  .eq("product_id", pid).eq("merchant_id", "merchant_mxx_001")
-                 .maybe_single().execute()).data
+                 .maybe_single().execute())
+            p = getattr(p_res, "data", None) if p_res else None
             if not p or not p.get("active") or (p.get("inventory_qty") or 0) < qty:
-                return "Order blocked by Guardian: product unavailable or insufficient inventory."
+                raise GuardianException("product unavailable or insufficient inventory.")
             unit = int(p["price_paise"])
             line = unit * qty
             subtotal += line
@@ -186,8 +205,21 @@ def create_razorpay_order(state: Annotated[dict, InjectedState], customer_email:
         rzp_order = orders.create_order(total, "INR", receipt=intent_id, notes=notes)
 
         # ── Persist locally ──
-        local_id = f"ord_{uuid.uuid4().hex[:12]}"
         now = datetime.now(timezone.utc).isoformat()
+        
+        # Step 1: Secure the Razorpay order ID on the intent immediately to prevent Ghost Orders.
+        try:
+            supabase.table("purchase_intents").update({
+                "purchase_state": "PAYMENT_PENDING",
+                "razorpay_order_id": rzp_order["id"],
+                "updated_at": now
+            }).eq("purchase_intent_id", intent_id).execute()
+        except Exception as e:
+            logger.error("CRITICAL GHOST ORDER: Failed to save rzp_order %s to intent %s: %s", rzp_order["id"], intent_id, e)
+            return "Order creation failed during DB persistence. Please check payment status."
+
+        # Step 2: Create local order mapping
+        local_id = f"ord_{uuid.uuid4().hex[:12]}"
         try:
             supabase.table("orders").insert({
                 "order_id": local_id,
@@ -203,51 +235,47 @@ def create_razorpay_order(state: Annotated[dict, InjectedState], customer_email:
                 "source": "AI_AGENT",
                 "purchase_state": "PAYMENT_PENDING"
             }).execute()
-        except Exception as dup_exc:
-            # Unique constraint on purchase_intent_id fired → concurrent race
-            logger.warning("Duplicate order insert blocked by DB constraint for intent %s: %s",
-                           intent_id, dup_exc)
-            existing = supabase.table("orders").select("order_id").eq("purchase_intent_id", intent_id).limit(1).execute().data
-            if existing:
-                # Retrieve the Razorpay order that was saved
-                mapped = supabase.table("entity_mapping").select("razorpay_id").eq("synthetic_id", existing[0]["order_id"]).eq("entity_type", "order").maybe_single().execute()
-                if mapped and mapped.data:
-                    return (f"Razorpay Order already exists. Order ID: {mapped.data['razorpay_id']}\n"
-                            f"Amount: Rs.{total/100:,.2f}\n"
-                            f"Payment is pending; verify Razorpay status before treating it as successful.")
-            return "Order creation conflict detected. Please check payment status."
 
-        for p, qty, unit, line in validated:
-            supabase.table("order_items").insert({
-                "order_item_id": f"oi_{uuid.uuid4().hex[:12]}",
-                "order_id": local_id,
-                "product_id": p["product_id"],
-                "quantity": qty,
-                "unit_price_paise": unit,
-                "discount_paise": 0,
-                "total_paise": line
+            for p, qty, unit, line in validated:
+                supabase.table("order_items").insert({
+                    "order_item_id": f"oi_{uuid.uuid4().hex[:12]}",
+                    "order_id": local_id,
+                    "product_id": p["product_id"],
+                    "quantity": qty,
+                    "unit_price_paise": unit,
+                    "discount_paise": 0,
+                    "total_paise": line
+                }).execute()
+
+            supabase.table("entity_mapping").insert({
+                "synthetic_id": local_id,
+                "entity_type": "order",
+                "razorpay_id": rzp_order["id"]
             }).execute()
-
-        supabase.table("entity_mapping").insert({
-            "synthetic_id": local_id,
-            "entity_type": "order",
-            "razorpay_id": rzp_order["id"]
-        }).execute()
-
-        supabase.table("purchase_intents").update({
-            "purchase_state": "PAYMENT_PENDING",
-            "razorpay_order_id": rzp_order["id"],
-            "updated_at": now
-        }).eq("purchase_intent_id", intent_id).execute()
+        except Exception as exc:
+            logger.error("CRITICAL GHOST ORDER AVOIDANCE: Local order mapping failed for intent %s, rzp_order %s: %s", intent_id, rzp_order["id"], exc)
+            # Revert the intent state back to USER_CONFIRMED since we cannot proceed safely
+            try:
+                supabase.table("purchase_intents").update({"purchase_state": "USER_CONFIRMED", "razorpay_order_id": None}).eq("purchase_intent_id", intent_id).execute()
+            except Exception as rollback_exc:
+                logger.error("Failed to rollback intent state for %s: %s", intent_id, rollback_exc)
+            return "Order creation failed due to an internal error while mapping data. Please try again."
 
         return (f"Razorpay Order created successfully. Order ID: {rzp_order['id']}\n"
                 f"Amount: Rs.{total/100:,.2f}\n"
-                f"Local order: {local_id}\n"
                 f"Payment is pending; verify Razorpay status before treating it as successful.")
     except GuardianException as exc:
+        try:
+            supabase.table("purchase_intents").update({"purchase_state": "USER_CONFIRMED"}).eq("purchase_intent_id", intent_id).eq("purchase_state", "ORDER_CREATING").execute()
+        except Exception:
+            pass
         return f"Order blocked by Guardian: {exc}"
     except Exception:
         logger.exception("Razorpay order creation failed for intent %s", intent_id)
+        try:
+            supabase.table("purchase_intents").update({"purchase_state": "USER_CONFIRMED"}).eq("purchase_intent_id", intent_id).eq("purchase_state", "ORDER_CREATING").execute()
+        except Exception:
+            pass
         return "Order creation failed due to a temporary error. Please try again."
 
 @tool

@@ -1,0 +1,12 @@
+- generic [ref=f2e3]:
+  - complementary [ref=f2e4]:
+    - generic [ref=f2e5]: Merchant Maxx
+    - navigation [ref=f2e9]:
+      - link "Catalog" [ref=f2e10] [cursor=pointer]:
+        - /url: /
+      - link "Agent Chat" [ref=f2e14] [cursor=pointer]:
+        - /url: /chat
+      - link "Audit Trail" [ref=f2e17] [cursor=pointer]:
+        - /url: /audit
+  - main [ref=f2e20]:
+    - generic [ref=f2e21]: Loading catalog...

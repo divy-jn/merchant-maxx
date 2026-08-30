@@ -19,6 +19,21 @@ class ChatResponse(BaseModel):
 
 CONFIRM_RE = re.compile(r"^(yes|y|yeah|yep|sure|okay|ok|proceed|go ahead|do it|confirm|confirmed|place it|buy it)\s*[.!]*$", re.I)
 
+def verify_conversation_ownership(conv_id: str, current_user: dict):
+    if not conv_id or conv_id == "guest":
+        return
+    conv_q = supabase.table("conversations").select("user_id").eq("id", conv_id).maybe_single().execute()
+    conv = conv_q.data if conv_q else None
+    
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+        
+    owner_id = conv.get("user_id")
+    user_id = current_user.get("user_id") if current_user else None
+    
+    if owner_id != user_id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this conversation")
+
 def _load_active_intent(conv_id: str):
     result = (supabase.table("purchase_intents").select("*").eq("conversation_id", conv_id)
               .in_("purchase_state", ["PURCHASE_PENDING", "RECOMMENDATION_SHOWN", "USER_CONFIRMED", "RECOVERY_PENDING", "PAYMENT_FAILED", "PAYMENT_UNKNOWN", "PRODUCT_SELECTED"])
@@ -55,6 +70,9 @@ def chat_with_maxx(req: ChatRequest, current_user: dict = Depends(get_current_us
     try:
         user_id = current_user.get("user_id") if current_user else None
         conv_id = req.conversation_id
+        
+        verify_conversation_ownership(conv_id, current_user)
+        
         if not conv_id or conv_id == "guest":
             data = {"title": req.message[:50]}
             if user_id: data["user_id"] = user_id
@@ -100,12 +118,14 @@ def chat_with_maxx(req: ChatRequest, current_user: dict = Depends(get_current_us
 @router.get("/history")
 def get_chat_history(conversation_id: str = None, current_user: dict = Depends(get_current_user)):
     if not supabase or not conversation_id or conversation_id == "guest": return []
+    verify_conversation_ownership(conversation_id, current_user)
     res = supabase.table("messages").select("*").eq("conversation_id", conversation_id).order("created_at", desc=False).execute()
     return [{"sender": "user" if m["role"] == "user" else "bot", "text": m["content"]} for m in res.data]
 
 @router.delete("/history")
 def clear_chat_history(conversation_id: str, current_user: dict = Depends(get_current_user)):
     if not supabase or not conversation_id or conversation_id == "guest": return {"status": "cleared"}
+    verify_conversation_ownership(conversation_id, current_user)
     supabase.table("conversations").delete().eq("id", conversation_id).execute()
     return {"status": "cleared"}
 

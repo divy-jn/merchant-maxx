@@ -14,13 +14,12 @@ class GlobalErrorMiddleware(BaseHTTPMiddleware):
             print(f"GlobalErrorMiddleware caught an exception: {exc}", file=sys.stderr)
             traceback.print_exc()
             
-            # Format a standardized error response
+            # Format a standardized error response — never expose internals
             return JSONResponse(
                 status_code=500,
                 content={
                     "error": "Internal Server Error",
                     "message": "An unexpected error occurred processing your request.",
-                    "path": request.url.path,
-                    "type": exc.__class__.__name__
+                    "path": request.url.path
                 }
             )

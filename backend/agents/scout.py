@@ -43,10 +43,24 @@ def scout_node(state: dict):
     import time
     state_update = {"scout_start": time.time()}
     messages = list(state.get("messages", []))
-    if not messages or not isinstance(messages[0], SystemMessage):
-        messages.insert(0, SystemMessage(content=scout_prompt))
+    
+    ctx = state.get("purchase_context", {})
+    basket = ctx.get("basket_items", [])
+    basket_str = "Current Cart: " + ", ".join([f"{item.get('quantity', 1)}x {item['product_id']}" for item in basket]) if basket else "Current Cart: Empty"
+    
+    sys_msg = scout_prompt + "\n\n" + basket_str
+    
+    if not messages or not getattr(messages[0], "content", "").startswith("You are MAXX"):
+        messages.insert(0, SystemMessage(content=sys_msg))
+    else:
+        messages[0] = SystemMessage(content=sys_msg)
+        
     response = get_llm().bind_tools(SCOUT_TOOLS).invoke(messages)
     state_update["messages"] = [response]
+
+    existing_ctx = state.get("purchase_context") or {}
+    intent_id = existing_ctx.get("purchase_intent_id")
+    basket_items = list(existing_ctx.get("basket_items") or [])
 
     for tc in getattr(response, "tool_calls", []) or []:
         if tc["name"] != "stage_purchase_intent":
@@ -61,62 +75,113 @@ def scout_node(state: dict):
             logger.warning("Scout tried to stage product %s not found in conversation history %s — blocking",
                            product_id, known_ids)
             continue
-
-        # Never trust the model for the authoritative price.
-        from utils.supabase_client import supabase
-        product = None
-        if supabase:
-            try:
-                result = (supabase.table("products").select("product_id,price_paise,active,inventory_qty")
-                          .eq("product_id", product_id).eq("merchant_id", "merchant_mxx_001")
-                          .maybe_single().execute())
-                product = getattr(result, "data", None) if result else None
-            except Exception as e:
-                logger.error("Error fetching product %s: %s", product_id, e)
-                product = None
-
+            
         # ── Quantity validation ──
         try:
             quantity = int(tc["args"].get("quantity", 1))
         except (ValueError, TypeError):
             quantity = 1
-        if quantity < 1:
-            quantity = 1
-        if quantity > MAX_QUANTITY:
+            
+        if quantity < 0:
+            logger.warning("Scout invalid negative quantity — ignoring")
+            continue
+        elif quantity > MAX_QUANTITY:
             quantity = MAX_QUANTITY
 
-        if not product or not product.get("active") or (product.get("inventory_qty") or 0) < quantity:
-            continue
-        intent_id = f"pi_{uuid.uuid4().hex[:12]}"
-        
-        # Server-side authoritative amount calculation
-        unit_price = int(product["price_paise"])
-        amount = unit_price * quantity
-        
+        existing_item_idx = next((i for i, item in enumerate(basket_items) if item.get("product_id") == product_id), -1)
+
+        from utils.supabase_client import supabase
+        if quantity == 0:
+            if existing_item_idx == -1:
+                logger.warning("Scout tried to remove product %s not in basket — ignoring", product_id)
+                continue
+            basket_items.pop(existing_item_idx)
+        else:
+            product = None
+            if supabase:
+                try:
+                    result = (supabase.table("products").select("product_id,price_paise,active,inventory_qty")
+                              .eq("product_id", product_id).eq("merchant_id", "merchant_mxx_001")
+                              .maybe_single().execute())
+                    product = getattr(result, "data", None) if result else None
+                except Exception as e:
+                    logger.error("Error fetching product %s: %s", product_id, e)
+
+            if not product or not product.get("active") or (product.get("inventory_qty") or 0) < quantity:
+                logger.warning("Scout invalid quantity/product %s — ignoring", product_id)
+                continue
+                
+            if existing_item_idx != -1:
+                basket_items[existing_item_idx]["quantity"] = quantity
+            else:
+                basket_items.append({"product_id": product_id, "quantity": quantity})
+
+        if not intent_id:
+            intent_id = f"pi_{uuid.uuid4().hex[:12]}"
+            
+        # ── Server-side authoritative amount calculation ──
+        total_amount = 0
+        valid_basket = []
+        if supabase:
+            for item in basket_items:
+                try:
+                    p_res = supabase.table("products").select("product_id,price_paise,active").eq("product_id", item["product_id"]).eq("merchant_id", "merchant_mxx_001").maybe_single().execute()
+                    p_data = getattr(p_res, "data", None) if p_res else None
+                    if p_data and p_data.get("active"):
+                        qty = int(item["quantity"])
+                        total_amount += int(p_data["price_paise"]) * qty
+                        valid_basket.append({"product_id": item["product_id"], "quantity": qty})
+                except Exception as e:
+                    logger.error("Error recalculating product %s: %s", item["product_id"], e)
+            basket_items = valid_basket
+
         ctx = {
             "purchase_intent_id": intent_id,
-            "basket_items": [{"product_id": product_id, "quantity": quantity}],
-            "amount_paise": amount,
-            "intent_description": f"Purchase intent for {quantity}x {product_id}"
+            "basket_items": basket_items,
+            "amount_paise": total_amount,
+            "intent_description": f"Purchase intent for {sum(item['quantity'] for item in basket_items)} items"
         }
+        
         if supabase:
-            supabase.table("purchase_intents").insert({
-                "purchase_intent_id": intent_id,
-                "conversation_id": state.get("session_id"),
-                "customer_id": state.get("customer_id"),
-                "merchant_id": "merchant_mxx_001",
-                "purchase_state": "PRODUCT_SELECTED",
-                "basket": ctx["basket_items"],
-                "subtotal_paise": amount,
-                "discount_paise": 0,
-                "tax_paise": 0,
-                "amount_paise": amount,
-                "user_confirmed": False
-            }).execute()
+            try:
+                mutation_success = False
+                if existing_ctx.get("purchase_intent_id"):
+                    # ── Atomic conditional update ──
+                    # Fails safely (updates 0 rows) if intent is locked by order creation.
+                    res = supabase.table("purchase_intents").update({
+                        "basket": ctx["basket_items"],
+                        "amount_paise": total_amount,
+                        "purchase_state": "PRODUCT_SELECTED" if basket_items else "IDLE",
+                        "user_confirmed": False
+                    }).eq("purchase_intent_id", intent_id).is_("razorpay_order_id", "null").in_("purchase_state", ["IDLE", "PRODUCT_SELECTED", "RECOMMENDATION_SHOWN", "PURCHASE_PENDING", "USER_CONFIRMED", "PAYMENT_FAILED", "PAYMENT_UNKNOWN", "RECOVERY_PENDING"]).execute()
+                    
+                    if res and res.data and len(res.data) == 1:
+                        mutation_success = True
+
+                if not mutation_success:
+                    new_intent_id = f"pi_{uuid.uuid4().hex[:12]}"
+                    intent_id = new_intent_id
+                    ctx["purchase_intent_id"] = intent_id
+                    
+                    supabase.table("purchase_intents").insert({
+                        "purchase_intent_id": intent_id,
+                        "conversation_id": state.get("session_id"),
+                        "customer_id": state.get("customer_id"),
+                        "merchant_id": "merchant_mxx_001",
+                        "purchase_state": "PRODUCT_SELECTED" if basket_items else "IDLE",
+                        "basket": ctx["basket_items"],
+                        "amount_paise": total_amount,
+                        "user_confirmed": False
+                    }).execute()
+            except Exception as e:
+                logger.error("Failed to persist purchase intent: %s", e)
+                # Rollback: don't mutate the agent's context if DB persistence fails
+                continue
+
         state_update["scout_result"] = {
             "intent_staged": True,
             "product_context": ctx
         }
-        break
+        existing_ctx = ctx
     state_update["scout_end"] = time.time()
     return state_update

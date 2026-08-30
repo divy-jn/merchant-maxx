@@ -15,7 +15,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     token = credentials.credentials
     try:
         # Replace with your actual secret key config from settings
-        payload = jwt.decode(token, getattr(settings, 'JWT_SECRET', '[MASKED_JWT_SECRET]'), algorithms=["HS256"])
+        payload = jwt.decode(token, settings.jwt_secret_key, algorithms=["HS256"])
         return payload
     except jwt.ExpiredSignatureError:
         raise HTTPException(
