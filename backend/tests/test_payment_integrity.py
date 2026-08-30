@@ -148,6 +148,12 @@ def test_create_razorpay_order_maintains_db_uniqueness():
             q.select.return_value = MockMappingQuery()
         elif name == "entity_mapping":
             q.select.return_value = MockMappingQuery()
+        elif name == "purchase_intents":
+            intent_mock = {"purchase_intent_id": "pi_existing", "conversation_id": "conv_123", "purchase_state": "USER_CONFIRMED", "user_confirmed": True, "basket": [{"product_id": "laptop", "quantity": 1}], "amount_paise": 50000, "confirmed_basket": [{"product_id": "laptop", "quantity": 1}], "confirmed_amount_paise": 50000}
+            q.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MockResult(intent_mock)
+            q.update.return_value.eq.return_value.eq.return_value.execute.return_value = MockResult([dict(intent_mock, purchase_state="ORDER_CREATING")])
+        elif name == "products":
+            q.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MockResult({"price_paise": 50000})
         return q
 
     mock_db.table.side_effect = mock_table
@@ -156,12 +162,13 @@ def test_create_razorpay_order_maintains_db_uniqueness():
         response = create_razorpay_order.invoke(
             input={
                 "state": {
+                    "session_id": "conv_123",
                     "purchase_context": {
                         "purchase_intent_id": "pi_existing",
                         "basket": [{"product_id": "laptop", "quantity": 1}],
                         "purchase_state": "USER_CONFIRMED",
                         "user_confirmed": True,
-                        "amount_paise": 5000000
+                        "amount_paise": 50000
                     }
                 },
                 "customer_email": "test@test.com",
@@ -170,7 +177,7 @@ def test_create_razorpay_order_maintains_db_uniqueness():
             config={"configurable": {"thread_id": "t1"}}
         )
         # Should return the existing order safely, rather than crashing
-        assert "Order creation conflict detected" in response or "Razorpay Order already exists" in response
+        assert "Order blocked by Guardian" in response and "RULE_05_IDEMPOTENCY" in response
 
 def test_webhook_cross_check_no_downgrade_or_cross_mutation():
     from routes.webhooks import handle_razorpay_webhook

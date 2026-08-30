@@ -44,6 +44,8 @@ def setup_intent_and_order(state="PAYMENT_PENDING", rzp_order_id=None):
         "user_confirmed": True,
         "basket": [{"product_id": "item_laptop", "quantity": 1}],
         "amount_paise": 50000,
+        "confirmed_basket": [{"product_id": "item_laptop", "quantity": 1}],
+        "confirmed_amount_paise": 50000,
         "razorpay_order_id": rzp_order_id
     }).execute()
     
@@ -131,7 +133,9 @@ def test_create_razorpay_order_fails_if_local_persistence_fails(monkeypatch):
         "purchase_state": "USER_CONFIRMED",
         "user_confirmed": True,
         "basket": [{"product_id": "item_laptop", "quantity": 1}],
-        "amount_paise": 50000
+        "amount_paise": 50000,
+        "confirmed_basket": [{"product_id": "item_laptop", "quantity": 1}],
+        "confirmed_amount_paise": 50000
     }).execute()
     
     # Mock supabase to fail on insert to orders
@@ -145,7 +149,7 @@ def test_create_razorpay_order_fails_if_local_persistence_fails(monkeypatch):
     monkeypatch.setattr(agents.tools.supabase, "table", fail_orders_table)
     
     res = create_razorpay_order.invoke({
-        "state": {"purchase_context": {"purchase_intent_id": intent_id, "basket": [{"product_id": "item_laptop", "quantity": 1}], "amount_paise": 50000}},
+        "state": {"session_id": conv_id, "purchase_context": {"purchase_intent_id": intent_id, "basket": [{"product_id": "item_laptop", "quantity": 1}], "amount_paise": 50000}},
     })
     
     assert "internal error while mapping data" in res

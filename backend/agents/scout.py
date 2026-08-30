@@ -152,7 +152,10 @@ def scout_node(state: dict):
                         "basket": ctx["basket_items"],
                         "amount_paise": total_amount,
                         "purchase_state": "PRODUCT_SELECTED" if basket_items else "IDLE",
-                        "user_confirmed": False
+                        "user_confirmed": False,
+                        "confirmed_basket": None,
+                        "confirmed_amount_paise": None,
+                        "confirmation_timestamp": None
                     }).eq("purchase_intent_id", intent_id).is_("razorpay_order_id", "null").in_("purchase_state", ["IDLE", "PRODUCT_SELECTED", "RECOMMENDATION_SHOWN", "PURCHASE_PENDING", "USER_CONFIRMED", "PAYMENT_FAILED", "PAYMENT_UNKNOWN", "RECOVERY_PENDING"]).execute()
                     
                     if res and res.data and len(res.data) == 1:

@@ -1,0 +1,11 @@
+.gcloudignore
+.git
+.gitignore
+.playwright-mcp/
+scratch_*.py
+backend/db/migrations/004_inventory_fulfillment.sql
+backend/services/refund_service.py
+backend/tests/test_inventory_fulfillment.py
+docs/task26_*.md
+docs/task27_*.md
+docs/task21_*.md

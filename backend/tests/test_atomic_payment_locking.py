@@ -32,7 +32,9 @@ def setup_intent(state="USER_CONFIRMED", razorpay_order_id=None):
         "purchase_state": state,
         "user_confirmed": True,
         "basket": [{"product_id": "item_laptop", "quantity": 1}],
-        "amount_paise": 50000
+        "amount_paise": 50000,
+        "confirmed_basket": [{"product_id": "item_laptop", "quantity": 1}],
+        "confirmed_amount_paise": 50000
     }
     if razorpay_order_id:
         data["razorpay_order_id"] = razorpay_order_id
@@ -59,7 +61,7 @@ def test_toctou_race_condition(monkeypatch):
 
     closer_result = []
     def closer_thread():
-        state = {"purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "purchase_state": "USER_CONFIRMED", "user_confirmed": True}
+        state = {"session_id": conv_id, "purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "purchase_state": "USER_CONFIRMED", "user_confirmed": True}
         res = create_razorpay_order.invoke({"state": state})
         closer_result.append(res)
         
@@ -122,7 +124,7 @@ def test_razorpay_api_failure_does_not_corrupt(monkeypatch):
     import agents.guardian
     monkeypatch.setattr(agents.guardian, "validate_action", lambda *a, **k: None)
 
-    state = {"purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "purchase_state": "USER_CONFIRMED", "user_confirmed": True}
+    state = {"session_id": conv_id, "purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "purchase_state": "USER_CONFIRMED", "user_confirmed": True}
     res = create_razorpay_order.invoke({"state": state})
     
     intent = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent_id).execute().data[0]

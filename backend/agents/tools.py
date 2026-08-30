@@ -130,6 +130,10 @@ def create_razorpay_order(state: Annotated[dict, InjectedState], customer_email:
         intent = getattr(intent_res, "data", None) if intent_res else None
         if not intent:
             return "Order blocked: purchase intent not found."
+            
+        # ── Authoritative IDOR Check ──
+        if intent.get("conversation_id") != state.get("session_id"):
+            return "Order blocked: purchase intent ownership verification failed."
 
         # ── Idempotency: if a Razorpay order already exists, return it ──
         existing_rzp_order_id = intent.get("razorpay_order_id")
@@ -142,6 +146,10 @@ def create_razorpay_order(state: Annotated[dict, InjectedState], customer_email:
 
         if intent.get("purchase_state") != "USER_CONFIRMED" or not intent.get("user_confirmed"):
             return "Order blocked by Guardian: explicit confirmation is required."
+            
+        confirmed_basket = intent.get("confirmed_basket")
+        if not confirmed_basket or intent.get("basket") != confirmed_basket:
+            return "Order blocked: the basket has been modified since confirmation. Please re-confirm your purchase."
 
         # ── Atomically reserve the intent ──
         now = datetime.now(timezone.utc).isoformat()
@@ -155,15 +163,15 @@ def create_razorpay_order(state: Annotated[dict, InjectedState], customer_email:
             return "Order creation blocked: intent state changed concurrently. Please try again."
         
         # Use the securely locked snapshot from the DB
-        intent = res.data[0]
-        basket = intent.get("basket") or []
+        locked_intent = res.data[0]
+        basket = locked_intent.get("basket") or []
 
         # Check for existing local orders (DB-level backup for race condition)
         existing = supabase.table("orders").select("order_id").eq("purchase_intent_id", intent_id).limit(1).execute().data or []
         if existing:
             validate_action("Closer", "create_razorpay_order",
-                            {"purchase_intent_id": intent_id, "user_confirmed": True,
-                             "purchase_state": "USER_CONFIRMED", "is_duplicate": True},
+                            {"purchase_intent_id": intent_id, "user_confirmed": intent.get("user_confirmed"),
+                             "purchase_state": intent.get("purchase_state"), "is_duplicate": True},
                             int(intent.get("amount_paise") or 0))
 
         if not basket:
@@ -191,10 +199,13 @@ def create_razorpay_order(state: Annotated[dict, InjectedState], customer_email:
         total = subtotal - discount + tax
         if total <= 0 or int(intent.get("amount_paise") or 0) != total:
             return "Order blocked by Guardian: server-calculated basket total does not match purchase intent."
+            
+        if total != intent.get("confirmed_amount_paise"):
+            return "Order blocked: server-calculated amount does not match the confirmed amount."
 
         validate_action("Closer", "create_razorpay_order",
-                        {"purchase_intent_id": intent_id, "user_confirmed": True,
-                         "purchase_state": "USER_CONFIRMED", "entity_valid": True},
+                        {"purchase_intent_id": intent_id, "user_confirmed": intent.get("user_confirmed"),
+                         "purchase_state": intent.get("purchase_state"), "entity_valid": True},
                         total)
 
         # ── Create Razorpay order ──

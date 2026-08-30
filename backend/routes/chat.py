@@ -68,8 +68,8 @@ def _accept_latest_recommendation(intent: dict):
         if p: subtotal += int(p["price_paise"]) * int(item.get("quantity", 1))
     now = datetime.now(timezone.utc).isoformat()
     supabase.table("recommendation_events").update({"status": "ACCEPTED", "accepted_at": now}).eq("recommendation_id", rec["recommendation_id"]).execute()
-    supabase.table("purchase_intents").update({"basket": basket, "subtotal_paise": subtotal, "amount_paise": subtotal, "recommendation_id": rec["recommendation_id"], "purchase_state": "USER_CONFIRMED", "user_confirmed": True, "updated_at": now}).eq("purchase_intent_id", intent["purchase_intent_id"]).execute()
-    return dict(intent, basket=basket, subtotal_paise=subtotal, amount_paise=subtotal, recommendation_id=rec["recommendation_id"], purchase_state="USER_CONFIRMED", user_confirmed=True)
+    supabase.table("purchase_intents").update({"basket": basket, "subtotal_paise": subtotal, "amount_paise": subtotal, "recommendation_id": rec["recommendation_id"], "purchase_state": "USER_CONFIRMED", "user_confirmed": True, "confirmed_basket": basket, "confirmed_amount_paise": subtotal, "confirmation_timestamp": now, "updated_at": now}).eq("purchase_intent_id", intent["purchase_intent_id"]).execute()
+    return dict(intent, basket=basket, subtotal_paise=subtotal, amount_paise=subtotal, recommendation_id=rec["recommendation_id"], purchase_state="USER_CONFIRMED", user_confirmed=True, confirmed_basket=basket, confirmed_amount_paise=subtotal)
 
 @router.post("/", response_model=ChatResponse)
 def chat_with_maxx(req: ChatRequest, current_user: dict = Depends(get_current_user)):
@@ -93,8 +93,8 @@ def chat_with_maxx(req: ChatRequest, current_user: dict = Depends(get_current_us
                 intent = _accept_latest_recommendation(intent)
             else:
                 now = datetime.now(timezone.utc).isoformat()
-                supabase.table("purchase_intents").update({"user_confirmed": True, "purchase_state": "USER_CONFIRMED", "updated_at": now}).eq("purchase_intent_id", intent["purchase_intent_id"]).execute()
-                intent = dict(intent, user_confirmed=True, purchase_state="USER_CONFIRMED")
+                supabase.table("purchase_intents").update({"user_confirmed": True, "purchase_state": "USER_CONFIRMED", "confirmed_basket": intent.get("basket"), "confirmed_amount_paise": intent.get("amount_paise"), "confirmation_timestamp": now, "updated_at": now}).eq("purchase_intent_id", intent["purchase_intent_id"]).execute()
+                intent = dict(intent, user_confirmed=True, purchase_state="USER_CONFIRMED", confirmed_basket=intent.get("basket"), confirmed_amount_paise=intent.get("amount_paise"))
 
         context, purchase_state, user_confirmed = {}, "IDLE", False
         if intent:

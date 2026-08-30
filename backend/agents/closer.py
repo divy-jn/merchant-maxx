@@ -14,6 +14,7 @@ Rules:
 - If purchase_state is USER_CONFIRMED, the application may allow Guardian validation and order creation.
 - Never claim the user confirmed unless user_confirmed=True is present in state.
 - Never invent a basket, amount, product, Razorpay ID, or payment result.
+- Any modification to the basket after confirmation immediately invalidates the confirmation and requires a fresh user confirmation.
 - For FAILED/UNKNOWN, call check_payment_status when state inspection is needed. Never blindly retry.
 - A fresh purchase_intent_id and fresh confirmation are required for recovery.
 """

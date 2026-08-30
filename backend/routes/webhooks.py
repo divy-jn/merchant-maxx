@@ -148,9 +148,10 @@ async def handle_razorpay_webhook(request: Request):
 
     # ── State downgrade protection (Atomic DB Update) ─────────────────
     if intent_id:
-        current_intent = supabase.table("purchase_intents").select("purchase_state").eq(
+        current_intent = supabase.table("purchase_intents").select("purchase_state, basket").eq(
             "purchase_intent_id", intent_id).maybe_single().execute()
         current_state = (current_intent.data or {}).get("purchase_state", "PAYMENT_PENDING")
+        basket = (current_intent.data or {}).get("basket") or []
 
         if is_terminal(current_state) and target_state != current_state:
             # PAYMENT_SUCCESS → PAYMENT_FAILED is NEVER allowed
@@ -159,13 +160,46 @@ async def handle_razorpay_webhook(request: Request):
                 current_state, target_state, intent_id
             )
         elif can_transition(current_state, target_state):
+            fulfillment_status = "PENDING"
+            if target_status == "CAPTURED" and order:
+                try:
+                    rpc_res = supabase.rpc("atomic_inventory_decrement", {
+                        "p_order_id": order["order_id"],
+                        "p_intent_id": intent_id,
+                        "p_items": basket
+                    }).execute()
+                    
+                    status_flag = (rpc_res.data or {}).get("status")
+                    if status_flag == "success":
+                        fulfillment_status = "FULFILLED"
+                        logger.info("Inventory successfully decremented for order %s", order["order_id"])
+                    elif status_flag == "already_processed":
+                        fulfillment_status = "FULFILLED"
+                        logger.info("Inventory already decremented for order %s", order["order_id"])
+                    else:
+                        raise Exception(f"Unexpected RPC status: {status_flag}")
+                        
+                except Exception as e:
+                    logger.error("Inventory fulfillment failed for order %s: %s", order["order_id"], str(e))
+                    fulfillment_status = "UNFULFILLED"
+                    from services.refund_service import initiate_refund
+                    initiate_refund(rzp_payment_id, amount, "Inventory unavailable")
+
             # Enforce atomicity: NEVER overwrite a terminal PAYMENT_SUCCESS with a failure
             # If the row is already in PAYMENT_SUCCESS, a failure update will affect 0 rows.
             update_res = supabase.table("purchase_intents").update({
                 "purchase_state": target_state,
                 "razorpay_payment_id": rzp_payment_id,
+                "fulfillment_status": fulfillment_status,
                 "updated_at": received_at
             }).eq("purchase_intent_id", intent_id).neq("purchase_state", "PAYMENT_SUCCESS").execute()
+            
+            if order:
+                supabase.table("orders").update({
+                    "status": target_status,
+                    "fulfillment_status": fulfillment_status,
+                    "updated_at": received_at
+                }).eq("order_id", order["order_id"]).execute()
             
             # If the update succeeded and we are transitioning to success
             if update_res.data and target_status == "CAPTURED" and order:
