@@ -8,9 +8,12 @@ import uuid
 scout_prompt = """You are MAXX, the AI shopping assistant for Merchant Maxx.
 Help customers discover products and build a purchase intent.
 
-Use search_catalog and get_product_details for discovery. If the user explicitly chooses a product,
-call stage_purchase_intent with the exact product_id and the displayed price in paise. Never authorize payment.
-Do not generate payment links. Keep responses concise and friendly.
+Rules:
+1. Discovery: Use search_catalog and get_product_details to find products. If asked to compare, retrieve multiple products and compare them.
+2. Selection & Quantity: If the user explicitly chooses a product (e.g. "I'll take the Lenovo one", "Give me two of those"), call stage_purchase_intent with the exact product_id and the requested quantity (default 1).
+3. Ambiguity: If the user says "I'll buy it" but multiple products were discussed, DO NOT guess. Ask "Which one would you like?".
+4. Confirmation Safety: Do not mistake casual interest ("looks good", "nice") for a purchase decision. Only stage intent when the user explicitly expresses intent to buy.
+5. Never authorize payment, and never generate payment links. Keep responses concise and friendly.
 """
 
 def get_llm():
@@ -19,11 +22,13 @@ def get_llm():
 
 def scout_node(state: dict):
     """Discovery only. Staging is persisted, but it never authorizes payment."""
+    import time
+    state_update = {"scout_start": time.time()}
     messages = list(state.get("messages", []))
     if not messages or not isinstance(messages[0], SystemMessage):
         messages.insert(0, SystemMessage(content=scout_prompt))
     response = get_llm().bind_tools(SCOUT_TOOLS).invoke(messages)
-    state_update = {"messages": [response]}
+    state_update["messages"] = [response]
 
     for tc in getattr(response, "tool_calls", []) or []:
         if tc["name"] != "stage_purchase_intent":
@@ -43,15 +48,23 @@ def scout_node(state: dict):
             except Exception as e:
                 print(f"Error fetching product {product_id}: {e}")
                 product = None
-        if not product or not product.get("active") or (product.get("inventory_qty") or 0) < 1:
+        quantity = int(tc["args"].get("quantity", 1))
+        if quantity < 1:
+            quantity = 1
+
+        if not product or not product.get("active") or (product.get("inventory_qty") or 0) < quantity:
             continue
         intent_id = f"pi_{uuid.uuid4().hex[:12]}"
-        amount = int(product["price_paise"])
+        
+        # Server-side authoritative amount calculation
+        unit_price = int(product["price_paise"])
+        amount = unit_price * quantity
+        
         ctx = {
             "purchase_intent_id": intent_id,
-            "basket_items": [{"product_id": product_id, "quantity": 1}],
+            "basket_items": [{"product_id": product_id, "quantity": quantity}],
             "amount_paise": amount,
-            "intent_description": f"Purchase intent for {product_id}"
+            "intent_description": f"Purchase intent for {quantity}x {product_id}"
         }
         if supabase:
             supabase.table("purchase_intents").insert({
@@ -59,7 +72,7 @@ def scout_node(state: dict):
                 "conversation_id": state.get("session_id"),
                 "customer_id": state.get("customer_id"),
                 "merchant_id": "merchant_mxx_001",
-                "purchase_state": "PURCHASE_PENDING",
+                "purchase_state": "PRODUCT_SELECTED",
                 "basket": ctx["basket_items"],
                 "subtotal_paise": amount,
                 "discount_paise": 0,
@@ -67,8 +80,10 @@ def scout_node(state: dict):
                 "amount_paise": amount,
                 "user_confirmed": False
             }).execute()
-        state_update["purchase_state"] = "PURCHASE_PENDING"
-        state_update["purchase_context"] = ctx
-        state_update["user_confirmed"] = False
+        state_update["scout_result"] = {
+            "intent_staged": True,
+            "product_context": ctx
+        }
         break
+    state_update["scout_end"] = time.time()
     return state_update
