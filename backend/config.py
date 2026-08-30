@@ -44,5 +44,14 @@ class Settings(BaseSettings):
             raise ValueError("JWT_SECRET environment variable must be set in production")
         return self.JWT_SECRET or "[MASKED_JWT_SECRET]"
 
+    @property
+    def supabase_active_key(self) -> str:
+        # Prioritize service key to bypass RLS. Fail fast in production if missing.
+        if self.SUPABASE_SERVICE_KEY:
+            return self.SUPABASE_SERVICE_KEY
+        if self.APP_ENV == "production":
+            raise ValueError("SUPABASE_SERVICE_KEY is strictly required in production for database connectivity.")
+        return self.SUPABASE_ANON_KEY
+
 settings = Settings()
 

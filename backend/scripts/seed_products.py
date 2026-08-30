@@ -29,9 +29,9 @@ def seed_products():
     
     # Initialize Supabase client
     supabase: Client = None
-    if settings.SUPABASE_URL and settings.SUPABASE_ANON_KEY:
+    if settings.SUPABASE_URL and settings.supabase_active_key:
         try:
-            supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY)
+            supabase = create_client(settings.SUPABASE_URL, settings.supabase_active_key)
             logger.info("Supabase client initialized.")
         except Exception as e:
             logger.error(f"Failed to initialize Supabase: {e}")
