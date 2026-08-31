@@ -5,7 +5,7 @@ from agents.tools import create_razorpay_order
 
 @pytest.fixture
 def mock_supabase():
-    with patch("agents.tools.supabase") as mock_db:
+    with patch("agents.tools.supabase") as mock_db, patch("services.payment_resolution.supabase", mock_db):
         yield mock_db
 
 def _create_mock_intent(intent_id, overrides=None):
@@ -55,6 +55,7 @@ def _mock_db_responses(mock_supabase, intent, product_active=True, product_price
             mock_table.select.return_value.eq.return_value.eq.return_value.maybe_single.return_value.execute.return_value = mock_prod_res
         elif table_name == "orders":
             mock_table.select.return_value.eq.return_value.limit.return_value.execute.return_value = mock_existing
+            mock_table.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = mock_existing
         return mock_table
         
     mock_supabase.table.side_effect = side_effect

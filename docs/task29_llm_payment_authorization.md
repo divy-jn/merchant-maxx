@@ -45,6 +45,21 @@ The test suite in `backend/tests/test_atomic_payment_locking.py` and `backend/te
 
 All regression and adversarial tests are currently passing.
 
-## Status
+## Production Deployment & Verification
 
-**Remediation Complete.** Ready for deployment to Cloud Run.
+Task 29 changes have been successfully deployed to the `merchant-maxx-api` Cloud Run service.
+
+**Revision:** `merchant-maxx-api-00033-hd7` serving 100% of traffic.
+
+**Production Smoke Tests Results:**
+- ✅ `GET /`: Returns 200 OK
+- ✅ `GET /catalog`: Returns 200 OK (Cache hits verified)
+- ✅ Authenticated Chat: Successfully processes messages (DB connection functioning properly)
+- ✅ Cross-user conversation access: Returns 403 Forbidden
+- ✅ Unsigned Razorpay webhook: Returns 400 Bad Request (Invalid signature)
+- ✅ Supabase DB access: Backend retains full connectivity to the DB following migration `006_basket_confirmation.sql`.
+
+**Final Security Sign-off:**
+The critical invariant "THE LLM CAN REQUEST PAYMENT CREATION, BUT THE LLM MUST NEVER AUTHORIZE PAYMENT" has been successfully achieved and deployed to production. The database serves as the absolute authority, enforcing atomicity for purchase intents.
+
+Task 29 is now COMPLETE.

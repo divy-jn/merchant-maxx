@@ -45,13 +45,17 @@ ALTER TABLE conversations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_log ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Allow all on users" ON users;
+DROP POLICY IF EXISTS "Deny all public access on users" ON users;
 DROP POLICY IF EXISTS "Allow all on conversations" ON conversations;
+DROP POLICY IF EXISTS "Deny all public access on conversations" ON conversations;
 DROP POLICY IF EXISTS "Allow all on messages" ON messages;
+DROP POLICY IF EXISTS "Deny all public access on messages" ON messages;
 DROP POLICY IF EXISTS "Allow all on audit_log" ON audit_log;
-CREATE POLICY "Allow all on users" ON users FOR ALL USING (true);
-CREATE POLICY "Allow all on conversations" ON conversations FOR ALL USING (true);
-CREATE POLICY "Allow all on messages" ON messages FOR ALL USING (true);
-CREATE POLICY "Allow all on audit_log" ON audit_log FOR ALL USING (true);
+DROP POLICY IF EXISTS "Deny all public access on audit_log" ON audit_log;
+CREATE POLICY "Deny all public access on users" ON users FOR ALL TO public, anon, authenticated USING (false);
+CREATE POLICY "Deny all public access on conversations" ON conversations FOR ALL TO public, anon, authenticated USING (false);
+CREATE POLICY "Deny all public access on messages" ON messages FOR ALL TO public, anon, authenticated USING (false);
+CREATE POLICY "Deny all public access on audit_log" ON audit_log FOR ALL TO public, anon, authenticated USING (false);
 
 CREATE TABLE IF NOT EXISTS products (
     product_id TEXT PRIMARY KEY, merchant_id TEXT DEFAULT 'merchant_mxx_001', name TEXT,
@@ -82,7 +86,8 @@ CREATE TABLE IF NOT EXISTS payments (
 CREATE TABLE IF NOT EXISTS refunds (
     refund_id TEXT PRIMARY KEY, payment_id TEXT, order_id TEXT, customer_id TEXT,
     amount_paise BIGINT, status TEXT, reason TEXT, razorpay_refund_id TEXT,
-    created_at TIMESTAMPTZ, processed_at TIMESTAMPTZ
+    idempotency_key TEXT, error_reason TEXT,
+    created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now(), processed_at TIMESTAMPTZ
 );
 CREATE TABLE IF NOT EXISTS customer_events (
     event_id TEXT PRIMARY KEY, customer_id TEXT, merchant_id TEXT DEFAULT 'merchant_mxx_001',
@@ -139,6 +144,9 @@ CREATE TABLE IF NOT EXISTS purchase_intents (
     tax_paise BIGINT NOT NULL DEFAULT 0,
     amount_paise BIGINT NOT NULL DEFAULT 0,
     user_confirmed BOOLEAN NOT NULL DEFAULT false,
+    confirmed_basket JSONB,
+    confirmed_amount_paise BIGINT,
+    confirmation_timestamp TIMESTAMPTZ,
     razorpay_order_id TEXT,
     razorpay_payment_id TEXT,
     created_at TIMESTAMPTZ DEFAULT now(),
@@ -169,6 +177,8 @@ CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
 CREATE INDEX IF NOT EXISTS idx_payments_order ON payments(order_id);
 CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_refund_idempotency ON refunds(idempotency_key) WHERE idempotency_key IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_refund_payment_success ON refunds(payment_id) WHERE status IN ('REFUND_PENDING', 'REFUND_REQUESTED', 'REFUNDED', 'REFUND_UNKNOWN');
 CREATE INDEX IF NOT EXISTS idx_customer_events_customer ON customer_events(customer_id);
 CREATE INDEX IF NOT EXISTS idx_customer_events_session ON customer_events(session_id);
 CREATE INDEX IF NOT EXISTS idx_product_affinity_product ON product_affinity(product_id);
@@ -195,4 +205,141 @@ ALTER TABLE agent_audit ENABLE ROW LEVEL SECURITY;
 ALTER TABLE entity_mapping ENABLE ROW LEVEL SECURITY;
 ALTER TABLE purchase_intents ENABLE ROW LEVEL SECURITY;
 
-DO $$ DECLARE tbl TEXT; BEGIN FOR tbl IN SELECT unnest(ARRAY['products','customers','orders','order_items','payments','refunds','customer_events','product_affinity','customer_metrics','campaigns','recommendation_events','agent_audit','entity_mapping','purchase_intents']) LOOP EXECUTE format('DROP POLICY IF EXISTS "Allow all on %I" ON %I', tbl, tbl); EXECUTE format('CREATE POLICY "Allow all on %I" ON %I FOR ALL USING (true)', tbl, tbl); END LOOP; END $$;
+DO $$ DECLARE tbl TEXT; BEGIN FOR tbl IN SELECT unnest(ARRAY['products','customers','orders','order_items','payments','refunds','customer_events','product_affinity','customer_metrics','campaigns','recommendation_events','agent_audit','entity_mapping','purchase_intents']) LOOP EXECUTE format('DROP POLICY IF EXISTS "Allow all on %I" ON %I', tbl, tbl); EXECUTE format('DROP POLICY IF EXISTS "Deny all public access on %I" ON %I', tbl, tbl); EXECUTE format('CREATE POLICY "Deny all public access on %I" ON %I FOR ALL TO public, anon, authenticated USING (false)', tbl, tbl); END LOOP; END $$;
+
+CREATE TABLE IF NOT EXISTS webhook_events (
+    event_id TEXT PRIMARY KEY,
+    event_type TEXT NOT NULL,
+    razorpay_entity_id TEXT,
+    razorpay_order_id TEXT,
+    razorpay_payment_id TEXT,
+    received_at TIMESTAMPTZ DEFAULT now(),
+    processed_at TIMESTAMPTZ,
+    status TEXT NOT NULL DEFAULT 'RECEIVED',
+    error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_webhook_events_entity ON webhook_events(razorpay_entity_id);
+ALTER TABLE webhook_events ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow all on webhook_events" ON webhook_events;
+DROP POLICY IF EXISTS "Deny all public access on webhook_events" ON webhook_events;
+CREATE POLICY "Deny all public access on webhook_events" ON webhook_events FOR ALL TO public, anon, authenticated USING (false);
+
+CREATE TABLE IF NOT EXISTS inventory_decrement_events (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    order_id TEXT NOT NULL UNIQUE,
+    purchase_intent_id TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE inventory_decrement_events ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow all on inventory_decrement_events" ON inventory_decrement_events;
+DROP POLICY IF EXISTS "Deny all public access on inventory_decrement_events" ON inventory_decrement_events;
+CREATE POLICY "Deny all public access on inventory_decrement_events" ON inventory_decrement_events FOR ALL TO public, anon, authenticated USING (false);
+
+CREATE INDEX IF NOT EXISTS idx_orders_purchase_intent ON orders(purchase_intent_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_purchase_intent ON orders(purchase_intent_id) WHERE purchase_intent_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_purchase_intents_rzp_order ON purchase_intents(razorpay_order_id) WHERE razorpay_order_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_recommendation_events_rec_id ON recommendation_events(recommendation_id);
+
+CREATE OR REPLACE FUNCTION atomic_inventory_decrement(
+    p_order_id TEXT,
+    p_intent_id TEXT,
+    p_items JSONB
+) RETURNS JSONB AS $$
+DECLARE
+    item record;
+    current_qty INT;
+BEGIN
+    BEGIN
+        INSERT INTO inventory_decrement_events (order_id, purchase_intent_id) 
+        VALUES (p_order_id, p_intent_id);
+    EXCEPTION WHEN unique_violation THEN
+        RETURN jsonb_build_object('status', 'already_processed', 'message', 'Inventory already decremented for this order');
+    END;
+
+    FOR item IN 
+        SELECT product_id, quantity 
+        FROM jsonb_to_recordset(p_items) AS x(product_id TEXT, quantity INT)
+        ORDER BY product_id
+    LOOP
+        IF item.quantity IS NULL OR item.quantity <= 0 THEN
+            RAISE EXCEPTION 'Invalid quantity % for product %', item.quantity, item.product_id;
+        END IF;
+
+        SELECT inventory_qty INTO current_qty 
+        FROM products 
+        WHERE product_id = item.product_id 
+        FOR UPDATE;
+        
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Product % not found', item.product_id;
+        END IF;
+        
+        IF current_qty < item.quantity THEN
+            RAISE EXCEPTION 'Insufficient inventory for % (Requested: %, Available: %)', item.product_id, item.quantity, current_qty;
+        END IF;
+        
+        UPDATE products 
+        SET inventory_qty = inventory_qty - item.quantity,
+            updated_at = now()
+        WHERE product_id = item.product_id;
+    END LOOP;
+    
+    RETURN jsonb_build_object('status', 'success', 'message', 'Inventory decremented atomically');
+END;
+$$ LANGUAGE plpgsql;
+
+REVOKE EXECUTE ON FUNCTION atomic_inventory_decrement(TEXT, TEXT, JSONB) FROM public, anon, authenticated;
+
+CREATE OR REPLACE FUNCTION trg_prevent_intent_downgrade()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF OLD.purchase_state = 'PAYMENT_SUCCESS' THEN
+        IF NEW.purchase_state != 'PAYMENT_SUCCESS' THEN
+            RAISE EXCEPTION 'CRITICAL: Cannot downgrade purchase_intent from PAYMENT_SUCCESS to %', NEW.purchase_state;
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS enforce_intent_finality ON purchase_intents;
+CREATE TRIGGER enforce_intent_finality
+BEFORE UPDATE ON purchase_intents
+FOR EACH ROW
+EXECUTE FUNCTION trg_prevent_intent_downgrade();
+
+CREATE OR REPLACE FUNCTION trg_prevent_order_downgrade()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF OLD.status = 'CAPTURED' THEN
+        IF NEW.status != 'CAPTURED' THEN
+            RAISE EXCEPTION 'CRITICAL: Cannot downgrade order status from CAPTURED to %', NEW.status;
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS enforce_order_finality ON orders;
+CREATE TRIGGER enforce_order_finality
+BEFORE UPDATE ON orders
+FOR EACH ROW
+EXECUTE FUNCTION trg_prevent_order_downgrade();
+
+CREATE OR REPLACE FUNCTION trg_prevent_refund_downgrade()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF OLD.status = 'REFUNDED' THEN
+        IF NEW.status != 'REFUNDED' THEN
+            RAISE EXCEPTION 'CRITICAL: Cannot downgrade refund status from REFUNDED to %', NEW.status;
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS enforce_refund_finality ON refunds;
+CREATE TRIGGER enforce_refund_finality
+BEFORE UPDATE ON refunds
+FOR EACH ROW
+EXECUTE FUNCTION trg_prevent_refund_downgrade();

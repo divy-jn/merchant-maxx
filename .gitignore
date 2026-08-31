@@ -57,3 +57,8 @@ dataset/data/
 env.yaml
 _env_restore.*
 cloud_run_env.json
+
+service.json
+_env_restore.txt
+_env_restore.yaml
+cloud_run_env.json

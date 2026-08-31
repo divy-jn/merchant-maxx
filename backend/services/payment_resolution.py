@@ -124,7 +124,6 @@ def resolve_payment_status(rzp_order_id: str, rzp_payment_id: str, amount_paise:
         "purchase_state": target_state,
         "razorpay_payment_id": rzp_payment_id,
         "fulfillment_status": fulfillment_status,
-        "payment_updated_at": now,
         "updated_at": now
     }).eq("purchase_intent_id", intent_id).neq("purchase_state", "PAYMENT_SUCCESS").execute()
     

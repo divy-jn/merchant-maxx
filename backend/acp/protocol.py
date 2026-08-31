@@ -15,12 +15,6 @@ async def get_acp_discovery():
                 description="Search the merchant's catalog for products.",
                 endpoint="/acp/catalog/search",
                 method="POST"
-            ),
-            AgentCapability(
-                name="purchase_intent",
-                description="Initiate a purchase for a specific product.",
-                endpoint="/acp/purchase",
-                method="POST"
             )
         ]
     )

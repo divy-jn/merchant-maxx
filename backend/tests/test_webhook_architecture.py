@@ -144,6 +144,9 @@ def test_create_razorpay_order_fails_if_local_persistence_fails(monkeypatch):
         t = original_table(name)
         if name == "orders":
             t.insert = lambda *a, **k: (_ for _ in ()).throw(Exception("DB Insert Failed!"))
+        # we also need to fake the orders select in _recover_local_order
+        if name == "orders" or name == "entity_mapping":
+            t.select = lambda *a, **k: type("Q", (), {"eq": lambda self, *a, **k: type("Q", (), {"maybe_single": lambda self, *a, **k: type("R", (), {"execute": lambda self: type("Resp", (), {"data": None})()})(), "limit": lambda self, *a, **k: type("R", (), {"execute": lambda self: type("Resp", (), {"data": None})()})()})()})()
         return t
         
     monkeypatch.setattr(agents.tools.supabase, "table", fail_orders_table)
@@ -152,12 +155,12 @@ def test_create_razorpay_order_fails_if_local_persistence_fails(monkeypatch):
         "state": {"session_id": conv_id, "purchase_context": {"purchase_intent_id": intent_id, "basket": [{"product_id": "item_laptop", "quantity": 1}], "amount_paise": 50000}},
     })
     
-    assert "internal error while mapping data" in res
+    assert "System will recover automatically" in res
     
-    # Check that state was rolled back to USER_CONFIRMED
+    # Check that state is PAYMENT_PENDING to allow for recovery
     intent = supabase.table("purchase_intents").select("purchase_state, razorpay_order_id").eq("purchase_intent_id", intent_id).execute().data[0]
-    assert intent["purchase_state"] == "USER_CONFIRMED"
-    assert intent["razorpay_order_id"] is None
+    assert intent["purchase_state"] == "PAYMENT_PENDING"
+    assert intent["razorpay_order_id"] == "order_rzp_mock"
 
 def test_webhook_fallback_to_intent_id_without_entity_mapping(monkeypatch):
     """
@@ -172,10 +175,23 @@ def test_webhook_fallback_to_intent_id_without_entity_mapping(monkeypatch):
     supabase.table("purchase_intents").insert({
         "purchase_intent_id": intent_id,
         "purchase_state": "PAYMENT_PENDING",
+        "amount_paise": 50000,
         "razorpay_order_id": rzp_order_id
     }).execute()
     
     # Notice: NO entity_mapping OR orders row
+    original_table = routes.webhooks.supabase.table
+    def no_orders_table(name):
+        t = original_table(name)
+        if name in ["entity_mapping", "orders"]:
+            # Returns data: None so that it falls back
+            t.select = lambda *a, **k: type("Q", (), {"eq": lambda self, *a, **k: type("Q", (), {"eq": lambda self, *a, **k: type("Q", (), {"limit": lambda self, *a, **k: type("R", (), {"execute": lambda self: type("Resp", (), {"data": None})()})()})(), "maybe_single": lambda self, *a, **k: type("R", (), {"execute": lambda self: type("Resp", (), {"data": None})()})()})()})()
+        return t
+    monkeypatch.setattr(routes.webhooks.supabase, "table", no_orders_table)
+    # also payment_resolution
+    import services.payment_resolution
+    monkeypatch.setattr(services.payment_resolution.supabase, "table", no_orders_table)
+    
     req = MockRequest("payment.captured", {"payment": {"entity": {"order_id": rzp_order_id, "id": "pay_fallback", "amount": 50000}}})
     res = asyncio.run(handle_razorpay_webhook(req))
     

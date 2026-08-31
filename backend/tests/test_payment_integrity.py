@@ -224,7 +224,7 @@ def test_webhook_cross_check_no_downgrade_or_cross_mutation():
         def neq(self, *args): return self
         def maybe_single(self): return self
         def execute(self):
-            return MockResult({"purchase_state": "PAYMENT_PENDING"})
+            return MockResult({"purchase_state": "PAYMENT_PENDING", "amount_paise": 5000000})
 
     def mock_table(name):
         q = MagicMock()
@@ -242,7 +242,7 @@ def test_webhook_cross_check_no_downgrade_or_cross_mutation():
 
     mock_db.table.side_effect = mock_table
 
-    with patch("routes.webhooks.supabase", mock_db), patch("routes.webhooks.rzp", MagicMock()), patch("routes.webhooks.settings.RAZORPAY_WEBHOOK_SECRET", "secret"):
+    with patch("routes.webhooks.supabase", mock_db), patch("services.payment_resolution.supabase", mock_db), patch("routes.webhooks.rzp", MagicMock()), patch("routes.webhooks.settings.RAZORPAY_WEBHOOK_SECRET", "secret"):
         req = MockRequest()
         asyncio.run(handle_razorpay_webhook(req))
         
