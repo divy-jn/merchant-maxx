@@ -1,1 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 110" role="img" aria-labelledby="title desc"><title id="title">Merchant Maxx</title><desc id="desc">Merchant Maxx AI commerce logo</desc><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#0ea5e9"/><stop offset="55%" stop-color="#4f46e5"/><stop offset="100%" stop-color="#c026d3"/></linearGradient></defs><g transform="translate(8 10)"><path d="M8 42h40c8 0 14-6 14-14V18c0-8 6-14 14-14 4 0 8 2 11 5l53 53c4 4 10 4 14 0l53-53c3-3 7-5 11-5 8 0 14 6 14 14v56" fill="none" stroke="url(#g)" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 62h40M16 82h22" stroke="#2563eb" stroke-width="7" stroke-linecap="round"/></g><text x="228" y="47" font-family="Inter,Arial,sans-serif" font-size="19" font-weight="800" letter-spacing="2.4" fill="#0f172a">MERCHANT</text><text x="226" y="82" font-family="Inter,Arial,sans-serif" font-size="31" font-weight="900" letter-spacing="1"><tspan fill="#0f172a">MA</tspan><tspan fill="#4f46e5">XX</tspan></text></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 470 110" role="img" aria-labelledby="title desc">
+  <title id="title">Merchant Maxx</title>
+  <desc id="desc">Merchant Maxx AI commerce logo</desc>
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0ea5e9"/>
+      <stop offset="55%" stop-color="#4f46e5"/>
+      <stop offset="100%" stop-color="#c026d3"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(8 10)">
+    <path d="M8 42h40c8 0 14-6 14-14V18c0-8 6-14 14-14 4 0 8 2 11 5l53 53c4 4 10 4 14 0l53-53c3-3 7-5 11-5 8 0 14 6 14 14v56" fill="none" stroke="url(#g)" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M4 62h40M16 82h22" stroke="#2563eb" stroke-width="7" stroke-linecap="round"/>
+  </g>
+  <g transform="translate(250 0)">
+    <text x="0" y="44" font-family="Inter,Arial,sans-serif" font-size="17" font-weight="800" letter-spacing="2.2" fill="#0f172a">MERCHANT</text>
+    <text x="0" y="80" font-family="Inter,Arial,sans-serif" font-size="31" font-weight="900" letter-spacing="1"><tspan fill="#0f172a">MA</tspan><tspan fill="#4f46e5">XX</tspan></text>
+  </g>
+</svg>
