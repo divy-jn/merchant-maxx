@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Trash2, CreditCard, Sparkles } from 'lucide-react';
+import { Send, Trash2, CreditCard, Sparkles, Plus, MessageSquare, Search, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 import { useAuth } from '../context/AuthContext';
 import './AgentChat.css';
@@ -7,11 +7,21 @@ import './AgentChat.css';
 const RAZORPAY_KEY_ID = import.meta.env.VITE_RAZORPAY_KEY_ID || '';
 const ORDER_ID_REGEX = /Order ID:\s*(order_\w+)/i;
 const AMOUNT_REGEX = /Amount:\s*Rs\.\s*([\d,]+\.\d{2})/i;
+const WELCOME = 'Hi! I\'m MAXX, your AI shopping assistant at Merchant Maxx. I can help you discover products, compare options, and complete purchases.';
+
+function titleForConversation(conversation) {
+  return conversation?.title?.trim() || 'Untitled conversation';
+}
 
 export default function AgentChat({ sessionId = 'guest' }) {
   const { token } = useAuth();
   const [currentConvId, setCurrentConvId] = useState(sessionId);
-  const [messages, setMessages] = useState([{ sender: 'bot', text: 'Hi! I\'m MAXX, your AI shopping assistant at Merchant Maxx. I can help you discover products, compare options, and complete purchases.' }]);
+  const [conversations, setConversations] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [search, setSearch] = useState('');
+  const [messages, setMessages] = useState([{ sender: 'bot', text: WELCOME }]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [paymentInProgress, setPaymentInProgress] = useState(false);
@@ -19,11 +29,62 @@ export default function AgentChat({ sessionId = 'guest' }) {
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
+  const authHeaders = useCallback(() => {
+    const headers = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    return headers;
+  }, [token]);
+
+  const loadConversations = useCallback(async () => {
+    if (!token) {
+      setConversations([]);
+      return;
+    }
+    setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/chat/conversations`, { headers: authHeaders() });
+      if (!res.ok) throw new Error('Could not load conversations');
+      const data = await res.json();
+      setConversations(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setHistoryError(err.message);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [token, authHeaders]);
+
+  useEffect(() => { loadConversations(); }, [loadConversations]);
+
   useEffect(() => {
-    const headers = {}; if (token) headers['Authorization'] = `Bearer ${token}`;
-    fetch(`${API_BASE_URL}/chat/history?conversation_id=${currentConvId}`, { headers })
-      .then(res => res.json()).then(data => { if (data.length > 0) setMessages([{ sender: 'bot', text: 'Hi! I\'m MAXX, your AI shopping assistant at Merchant Maxx. I can help you discover products, compare options, and complete purchases.' }, ...data]); }).catch(() => {});
-  }, [currentConvId, token]);
+    if (!currentConvId || currentConvId === 'guest') {
+      setMessages([{ sender: 'bot', text: WELCOME }]);
+      return;
+    }
+    const loadHistory = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/chat/history?conversation_id=${encodeURIComponent(currentConvId)}`, { headers: authHeaders() });
+        if (!res.ok) throw new Error('Could not load conversation');
+        const data = await res.json();
+        setMessages([{ sender: 'bot', text: WELCOME }, ...(Array.isArray(data) ? data : [])]);
+      } catch {
+        setMessages([{ sender: 'bot', text: 'This conversation could not be loaded. Start a new chat or try again.' }]);
+      }
+    };
+    loadHistory();
+  }, [currentConvId, authHeaders]);
+
+  const selectConversation = (id) => {
+    if (loading || id === currentConvId) return;
+    setCurrentConvId(id);
+    setInput('');
+  };
+
+  const startNewChat = () => {
+    setCurrentConvId('guest');
+    setInput('');
+    setMessages([{ sender: 'bot', text: WELCOME }]);
+  };
 
   const openCheckout = useCallback((orderId, amountStr) => {
     if (paymentInProgress) return;
@@ -35,10 +96,10 @@ export default function AgentChat({ sessionId = 'guest' }) {
       handler: async function () {
         setMessages(prev => [...prev, { sender: 'bot', text: '⏳ Verifying payment...' }]);
         try {
-          const headers = { 'Content-Type': 'application/json' }; if (token) headers['Authorization'] = `Bearer ${token}`;
-          const res = await fetch(`${API_BASE_URL}/chat/`, { method: 'POST', headers, body: JSON.stringify({ message: 'Check payment status', conversation_id: currentConvId }) });
+          const res = await fetch(`${API_BASE_URL}/chat/`, { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ message: 'Check payment status', conversation_id: currentConvId }) });
           const data = await res.json();
           setMessages(prev => [...prev.filter(m => m.text !== '⏳ Verifying payment...'), { sender: 'bot', text: data.response || 'Payment received! Thank you for your purchase.' }]);
+          loadConversations();
         } catch { setMessages(prev => [...prev.filter(m => m.text !== '⏳ Verifying payment...'), { sender: 'bot', text: 'Payment submitted. Your order will be confirmed shortly.' }]); }
         setPaymentInProgress(false);
       },
@@ -49,27 +110,32 @@ export default function AgentChat({ sessionId = 'guest' }) {
       rzp.on('payment.failed', response => { setMessages(prev => [...prev, { sender: 'bot', text: `Payment failed: ${response.error?.description || 'Please try again'}.` }]); setPaymentInProgress(false); });
       rzp.open();
     } catch { setMessages(prev => [...prev, { sender: 'bot', text: 'Unable to open payment window. Please try again.' }]); setPaymentInProgress(false); }
-  }, [paymentInProgress, token, currentConvId]);
+  }, [paymentInProgress, authHeaders, currentConvId, loadConversations]);
 
   const handleSubmit = async (e) => {
     e.preventDefault(); if (!input.trim() || loading) return;
     const userMessage = input.trim(); setInput(''); setMessages(prev => [...prev, { sender: 'user', text: userMessage }]); setLoading(true);
     try {
-      const headers = { 'Content-Type': 'application/json' }; if (token) headers['Authorization'] = `Bearer ${token}`;
-      const res = await fetch(`${API_BASE_URL}/chat/`, { method: 'POST', headers, body: JSON.stringify({ message: userMessage, conversation_id: currentConvId }) });
+      const res = await fetch(`${API_BASE_URL}/chat/`, { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ message: userMessage, conversation_id: currentConvId }) });
       const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Message failed');
       if (data.conversation_id && data.conversation_id !== currentConvId) setCurrentConvId(data.conversation_id);
       const botText = data.response || 'Sorry, something went wrong.'; setMessages(prev => [...prev, { sender: 'bot', text: botText }]);
       const orderMatch = botText.match(ORDER_ID_REGEX); const amountMatch = botText.match(AMOUNT_REGEX);
       if (orderMatch?.[1]) setTimeout(() => setMessages(prev => [...prev, { sender: 'bot', text: `__PAY_BUTTON__${orderMatch[1]}__${amountMatch?.[1] || ''}`, isPayButton: true }]), 300);
-    } catch { setMessages(prev => [...prev, { sender: 'bot', text: 'Connection error. Please try again.' }]); }
+      await loadConversations();
+    } catch (err) { setMessages(prev => [...prev, { sender: 'bot', text: err.message || 'Connection error. Please try again.' }]); }
     finally { setLoading(false); }
   };
 
   const clearChat = async () => {
-    const headers = {}; if (token) headers['Authorization'] = `Bearer ${token}`;
-    await fetch(`${API_BASE_URL}/chat/history?conversation_id=${currentConvId}`, { method: 'DELETE', headers });
-    setMessages([{ sender: 'bot', text: 'Hi! I\'m MAXX, your AI shopping assistant at Merchant Maxx. What are you looking for today?' }]);
+    if (currentConvId === 'guest') {
+      setMessages([{ sender: 'bot', text: WELCOME }]);
+      return;
+    }
+    await fetch(`${API_BASE_URL}/chat/history?conversation_id=${encodeURIComponent(currentConvId)}`, { method: 'DELETE', headers: authHeaders() });
+    setConversations(prev => prev.filter(c => c.id !== currentConvId));
+    startNewChat();
   };
 
   const renderMessageText = (text, msg) => {
@@ -81,20 +147,44 @@ export default function AgentChat({ sessionId = 'guest' }) {
     return text.split(urlRegex).map((part, i) => part.match(/^https?:\/\//) ? <a key={i} href={part.replace(/[)}\].,;:!?]+$/, '')} target="_blank" rel="noopener noreferrer">{part}</a> : part);
   };
 
+  const filteredConversations = conversations.filter(c => titleForConversation(c).toLowerCase().includes(search.trim().toLowerCase()));
+
   return (
-    <div className="chat-container animate-fade-in">
-      <div className="chat-header">
-        <div className="chat-title-group"><div className="assistant-mark"><Sparkles size={19} /></div><div><h1>MAXX Assistant</h1><p>Your AI commerce copilot</p></div></div>
-        <button className="btn btn-outline" onClick={clearChat}><Trash2 size={16} /> Clear</button>
-      </div>
-      <div className="chat-box glass-panel">
-        <div className="messages-list">
-          {messages.map((msg, idx) => <div key={idx} className={`message-item ${msg.sender}`}><div className="message-bubble">{msg.sender === 'bot' && !msg.isPayButton && <span className="agent-label">MAXX · AI ASSISTANT</span>}{renderMessageText(msg.text, msg)}</div></div>)}
-          {loading && <div className="message-item bot"><div className="typing-indicator"><span></span><span></span><span></span> MAXX is thinking</div></div>}
-          <div ref={messagesEndRef} />
+    <div className={`chat-workspace ${sidebarOpen ? '' : 'sidebar-collapsed'} animate-fade-in`}>
+      {sidebarOpen && <aside className="conversation-sidebar">
+        <div className="conversation-header">
+          <div className="conversation-brand"><div className="conversation-brand-mark"><Sparkles size={16} /></div><div><strong>MAXX</strong><span>Conversations</span></div></div>
+          <button className="icon-button chat-sidebar-close" onClick={() => setSidebarOpen(false)} aria-label="Close conversations"><PanelLeftClose size={17} /></button>
         </div>
-        <div className="chat-input-container"><form className="chat-form" onSubmit={handleSubmit}><input aria-label="Message MAXX" type="text" className="chat-input" placeholder="Ask MAXX to find, compare, or buy…" value={input} onChange={e => setInput(e.target.value)} disabled={loading} /><button type="submit" className="btn btn-primary send-btn" disabled={loading || !input.trim()}><Send size={18} /><span>Send</span></button></form></div>
-      </div>
+        <button className="new-chat-button" onClick={startNewChat}><Plus size={17} /> New chat</button>
+        <div className="conversation-search"><Search size={15} /><input aria-label="Search conversations" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search chats" /></div>
+        <div className="conversation-list">
+          {historyLoading && <div className="conversation-empty">Loading chats…</div>}
+          {historyError && <div className="conversation-empty error">{historyError}</div>}
+          {!historyLoading && !historyError && filteredConversations.length === 0 && <div className="conversation-empty"><MessageSquare size={18} /><span>{search ? 'No matching chats' : 'Your saved chats will appear here'}</span></div>}
+          {!historyLoading && !historyError && filteredConversations.map(conversation => (
+            <button key={conversation.id} className={`conversation-item ${conversation.id === currentConvId ? 'active' : ''}`} onClick={() => selectConversation(conversation.id)}>
+              <MessageSquare size={16} />
+              <span className="conversation-copy"><strong>{titleForConversation(conversation)}</strong><small>{conversation.updated_at ? new Date(conversation.updated_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ''}</small></span>
+            </button>
+          ))}
+        </div>
+      </aside>}
+
+      <section className="chat-main">
+        <div className="chat-header">
+          <div className="chat-title-group"><button className={`icon-button chat-sidebar-open ${sidebarOpen ? 'hidden' : ''}`} onClick={() => setSidebarOpen(true)} aria-label="Open conversations"><PanelLeftOpen size={18} /></button><div className="assistant-mark"><Sparkles size={19} /></div><div><h1>MAXX Assistant</h1><p>Your AI commerce copilot</p></div></div>
+          <button className="btn btn-outline" onClick={clearChat}><Trash2 size={16} /> Clear</button>
+        </div>
+        <div className="chat-box glass-panel">
+          <div className="messages-list">
+            {messages.map((msg, idx) => <div key={idx} className={`message-item ${msg.sender}`}><div className="message-bubble">{msg.sender === 'bot' && !msg.isPayButton && <span className="agent-label">MAXX · AI ASSISTANT</span>}{renderMessageText(msg.text, msg)}</div></div>)}
+            {loading && <div className="message-item bot"><div className="typing-indicator"><span></span><span></span><span></span> MAXX is thinking</div></div>}
+            <div ref={messagesEndRef} />
+          </div>
+          <div className="chat-input-container"><form className="chat-form" onSubmit={handleSubmit}><input aria-label="Message MAXX" type="text" className="chat-input" placeholder="Ask MAXX to find, compare, or buy…" value={input} onChange={e => setInput(e.target.value)} disabled={loading} /><button type="submit" className="btn btn-primary send-btn" disabled={loading || !input.trim()}><Send size={18} /><span>Send</span></button></form></div>
+        </div>
+      </section>
     </div>
   );
 }
