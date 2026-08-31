@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Activity, ArrowRight, ShieldCheck } from 'lucide-react';
+import { ArrowRight, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import './Login.css';
@@ -23,8 +23,8 @@ export default function Login() {
     <div className="login-container">
       <div className="login-card animate-fade-in">
         <div className="login-header">
-          <div className="login-mark"><Activity size={22} /></div>
-          <span className="login-eyebrow">MERCHANT MAXX</span>
+          <img src="/merchant-maxx-logo.svg" alt="Merchant Maxx" className="login-logo" />
+          <span className="login-eyebrow">AI COMMERCE WORKSPACE</span>
           <h1>Welcome back</h1>
           <p>Sign in to continue to your commerce workspace.</p>
         </div>
