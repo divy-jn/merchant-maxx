@@ -11,26 +11,19 @@ const AMOUNT_REGEX = /Amount:\s*Rs\.\s*([\d,]+\.\d{2})/i;
 export default function AgentChat({ sessionId = 'guest' }) {
   const { token } = useAuth();
   const [currentConvId, setCurrentConvId] = useState(sessionId);
-  const [messages, setMessages] = useState([
-    { sender: 'bot', text: 'Hi! I\'m MAXX, your AI shopping assistant at Merchant Maxx. I can help you discover products, compare options, and complete purchases.' }
-  ]);
+  const [messages, setMessages] = useState([{ sender: 'bot', text: 'Hi! I\'m MAXX, your AI shopping assistant at Merchant Maxx. I can help you discover products, compare options, and complete purchases.' }]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [paymentInProgress, setPaymentInProgress] = useState(false);
   const messagesEndRef = useRef(null);
 
-  const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  useEffect(() => { scrollToBottom(); }, [messages]);
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
   useEffect(() => {
-    const headers = {};
-    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const headers = {}; if (token) headers['Authorization'] = `Bearer ${token}`;
     fetch(`${API_BASE_URL}/chat/history?conversation_id=${currentConvId}`, { headers })
-      .then(res => res.json())
-      .then(data => {
-        if (data.length > 0) setMessages([{ sender: 'bot', text: 'Hi! I\'m MAXX, your AI shopping assistant at Merchant Maxx. I can help you discover products, compare options, and complete purchases.' }, ...data]);
-      }).catch(() => {});
-  }, [currentConvId]);
+      .then(res => res.json()).then(data => { if (data.length > 0) setMessages([{ sender: 'bot', text: 'Hi! I\'m MAXX, your AI shopping assistant at Merchant Maxx. I can help you discover products, compare options, and complete purchases.' }, ...data]); }).catch(() => {});
+  }, [currentConvId, token]);
 
   const openCheckout = useCallback((orderId, amountStr) => {
     if (paymentInProgress) return;
@@ -42,14 +35,11 @@ export default function AgentChat({ sessionId = 'guest' }) {
       handler: async function () {
         setMessages(prev => [...prev, { sender: 'bot', text: '⏳ Verifying payment...' }]);
         try {
-          const headers = { 'Content-Type': 'application/json' };
-          if (token) headers['Authorization'] = `Bearer ${token}`;
+          const headers = { 'Content-Type': 'application/json' }; if (token) headers['Authorization'] = `Bearer ${token}`;
           const res = await fetch(`${API_BASE_URL}/chat/`, { method: 'POST', headers, body: JSON.stringify({ message: 'Check payment status', conversation_id: currentConvId }) });
           const data = await res.json();
           setMessages(prev => [...prev.filter(m => m.text !== '⏳ Verifying payment...'), { sender: 'bot', text: data.response || 'Payment received! Thank you for your purchase.' }]);
-        } catch {
-          setMessages(prev => [...prev.filter(m => m.text !== '⏳ Verifying payment...'), { sender: 'bot', text: 'Payment submitted. Your order will be confirmed shortly.' }]);
-        }
+        } catch { setMessages(prev => [...prev.filter(m => m.text !== '⏳ Verifying payment...'), { sender: 'bot', text: 'Payment submitted. Your order will be confirmed shortly.' }]); }
         setPaymentInProgress(false);
       },
       modal: { ondismiss: () => { setMessages(prev => [...prev, { sender: 'bot', text: 'Payment was cancelled. You can try again by saying “pay” or “proceed”.' }]); setPaymentInProgress(false); }, escape: true, confirm_close: true }
@@ -62,8 +52,7 @@ export default function AgentChat({ sessionId = 'guest' }) {
   }, [paymentInProgress, token, currentConvId]);
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!input.trim() || loading) return;
+    e.preventDefault(); if (!input.trim() || loading) return;
     const userMessage = input.trim(); setInput(''); setMessages(prev => [...prev, { sender: 'user', text: userMessage }]); setLoading(true);
     try {
       const headers = { 'Content-Type': 'application/json' }; if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -104,7 +93,7 @@ export default function AgentChat({ sessionId = 'guest' }) {
           {loading && <div className="message-item bot"><div className="typing-indicator"><span></span><span></span><span></span> MAXX is thinking</div></div>}
           <div ref={messagesEndRef} />
         </div>
-        <div className="chat-input-container"><form className="chat-form"><input aria-label="Message MAXX" type="text" className="chat-input" placeholder="Ask MAXX to find, compare, or buy…" value={input} onChange={e => setInput(e.target.value)} disabled={loading} /><button type="submit" className="btn btn-primary send-btn" disabled={loading || !input.trim()}><Send size={18} /><span>Send</span></button></form></div>
+        <div className="chat-input-container"><form className="chat-form" onSubmit={handleSubmit}><input aria-label="Message MAXX" type="text" className="chat-input" placeholder="Ask MAXX to find, compare, or buy…" value={input} onChange={e => setInput(e.target.value)} disabled={loading} /><button type="submit" className="btn btn-primary send-btn" disabled={loading || !input.trim()}><Send size={18} /><span>Send</span></button></form></div>
       </div>
     </div>
   );
