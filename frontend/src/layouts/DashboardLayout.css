@@ -14,15 +14,21 @@
 }
 
 .brand {
-  display: block;
-  padding: 2px 8px 12px;
+  display: flex;
+  align-items: center;
+  min-height: 72px;
+  padding: 4px 8px 14px;
+  overflow: hidden;
   border-bottom: 1px solid var(--border);
 }
 
 .brand-logo {
   display: block;
-  width: 178px;
-  height: auto;
+  width: 176px;
+  max-width: 100%;
+  height: 46px;
+  object-fit: contain;
+  object-position: left center;
 }
 
 .brand-tagline {
@@ -31,6 +37,7 @@
   font-size: 0.72rem;
   font-weight: 650;
   letter-spacing: 0.04em;
+  line-height: 1.35;
   text-transform: uppercase;
 }
 
@@ -99,8 +106,8 @@
 @media (max-width: 760px) {
   .layout-container { display: block; }
   .sidebar { position: sticky; z-index: 20; width: 100%; height: auto; padding: 10px 14px; gap: 2px; border-right: 0; border-bottom: 1px solid var(--border); }
-  .brand { padding: 2px 4px 8px; border-bottom: 0; }
-  .brand-logo { width: 156px; }
+  .brand { min-height: 56px; padding: 2px 4px 8px; border-bottom: 0; }
+  .brand-logo { width: 156px; height: 42px; }
   .brand-tagline { display: none; }
   .nav-links { flex-direction: row; overflow-x: auto; flex: none; padding: 6px 0; }
   .nav-link { white-space: nowrap; padding: 9px 11px; }
