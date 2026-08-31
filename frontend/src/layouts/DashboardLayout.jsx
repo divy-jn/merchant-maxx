@@ -1,5 +1,5 @@
 import { Outlet, NavLink } from 'react-router-dom';
-import { ShoppingBag, MessageSquare, Shield, Activity, LogOut } from 'lucide-react';
+import { ShoppingBag, MessageSquare, Shield, LogOut } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import './DashboardLayout.css';
 
@@ -9,10 +9,10 @@ export default function DashboardLayout() {
   return (
     <div className="layout-container">
       <aside className="sidebar">
-        <div className="brand">
-          <Activity className="brand-icon" size={22} strokeWidth={2.4} />
-          <span>Merchant Maxx</span>
-        </div>
+        <NavLink to="/" end className="brand" aria-label="Merchant Maxx home">
+          <img src="/merchant-maxx-logo.svg" alt="Merchant Maxx" className="brand-logo" />
+        </NavLink>
+        <div className="brand-tagline">AI commerce workspace</div>
 
         <nav className="nav-links" aria-label="Primary navigation">
           <NavLink to="/" end className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
