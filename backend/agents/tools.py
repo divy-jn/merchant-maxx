@@ -140,6 +140,13 @@ def create_razorpay_order(state: Annotated[dict, InjectedState], customer_email:
         if existing_rzp_order_id:
             logger.info("Idempotent return: order %s already exists for intent %s",
                         existing_rzp_order_id, intent_id)
+            
+            # Check if local mapping exists, if not, recover it
+            existing_local = supabase.table("orders").select("order_id").eq("purchase_intent_id", intent_id).limit(1).execute().data
+            if not existing_local:
+                from services.payment_resolution import _recover_local_order
+                _recover_local_order(intent_id, existing_rzp_order_id, intent.get("customer_id"), intent.get("amount_paise"), intent.get("basket", []), intent.get("subtotal_paise", 0), intent.get("discount_paise", 0), intent.get("tax_paise", 0))
+
             return (f"Razorpay Order already exists. Order ID: {existing_rzp_order_id}\n"
                     f"Amount: Rs.{int(intent.get('amount_paise') or 0)/100:,.2f}\n"
                     f"Payment is pending; verify Razorpay status before treating it as successful.")
@@ -265,12 +272,10 @@ def create_razorpay_order(state: Annotated[dict, InjectedState], customer_email:
             }).execute()
         except Exception as exc:
             logger.error("CRITICAL GHOST ORDER AVOIDANCE: Local order mapping failed for intent %s, rzp_order %s: %s", intent_id, rzp_order["id"], exc)
-            # Revert the intent state back to USER_CONFIRMED since we cannot proceed safely
-            try:
-                supabase.table("purchase_intents").update({"purchase_state": "USER_CONFIRMED", "razorpay_order_id": None}).eq("purchase_intent_id", intent_id).in_("purchase_state", ["ORDER_CREATING", "PAYMENT_PENDING"]).execute()
-            except Exception as rollback_exc:
-                logger.error("Failed to rollback intent state for %s: %s", intent_id, rollback_exc)
-            return "Order creation failed due to an internal error while mapping data. Please try again."
+            # DO NOT ROLLBACK RAZORPAY_ORDER_ID.
+            # Just leave the intent as PAYMENT_PENDING with the valid Razorpay Order ID.
+            # Webhooks or a retry will trigger `_recover_local_order`.
+            return "Order creation partially completed. Razorpay order exists but local mapping timed out. System will recover automatically."
 
         return (f"Razorpay Order created successfully. Order ID: {rzp_order['id']}\n"
                 f"Amount: Rs.{total/100:,.2f}\n"
@@ -284,6 +289,7 @@ def create_razorpay_order(state: Annotated[dict, InjectedState], customer_email:
     except Exception:
         logger.exception("Razorpay order creation failed for intent %s", intent_id)
         try:
+            # Only rollback if we haven't already moved to PAYMENT_PENDING.
             supabase.table("purchase_intents").update({"purchase_state": "USER_CONFIRMED"}).eq("purchase_intent_id", intent_id).eq("purchase_state", "ORDER_CREATING").execute()
         except Exception:
             pass
@@ -321,16 +327,11 @@ def check_payment_status(state: Annotated[dict, InjectedState]) -> str:
         now = datetime.now(timezone.utc).isoformat()
 
         if any(p.get("status") == "captured" for p in ps):
-            # Reconciliation: update DB if webhook was missed
-            if db_state != "PAYMENT_SUCCESS" and can_transition(db_state, "PAYMENT_SUCCESS"):
-                captured = next(p for p in ps if p.get("status") == "captured")
-                supabase.table("purchase_intents").update({
-                    "purchase_state": "PAYMENT_SUCCESS",
-                    "razorpay_payment_id": captured.get("id"),
-                    "payment_updated_at": now,
-                    "updated_at": now
-                }).eq("purchase_intent_id", iid).neq("purchase_state", "PAYMENT_SUCCESS").execute()
-            return f"PAYMENT_SUCCESS: {rid} has a captured payment."
+            # Authoritative Payment Resolution Pipeline handles idempotency and fulfillment
+            captured = next(p for p in ps if p.get("status") == "captured")
+            from services.payment_resolution import resolve_payment_status
+            res = resolve_payment_status(rid, captured.get("id"), captured.get("amount"), "CAPTURED", source="reconciliation")
+            return f"PAYMENT_SUCCESS: {rid} has a captured payment. Fulfillment status: {res.get('fulfillment', 'UNKNOWN')}."
 
         if ps and all(p.get("status") == "failed" for p in ps):
             if db_state != "PAYMENT_FAILED" and can_transition(db_state, "PAYMENT_FAILED"):

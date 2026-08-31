@@ -66,34 +66,6 @@ async def handle_razorpay_webhook(request: Request):
             return {"status": "duplicate"}
         raise
 
-    # ── Map to local order ────────────────────────────────────────────
-    order = _local_order(rzp_order_id)
-    intent_id = None
-    if not order:
-        # Fallback to direct purchase_intent mapping
-        intent_res = supabase.table("purchase_intents").select("purchase_intent_id").eq("razorpay_order_id", rzp_order_id).maybe_single().execute()
-        if intent_res and intent_res.data:
-            intent_id = intent_res.data["purchase_intent_id"]
-            logger.warning("Local order missing for %s, falling back to intent %s", rzp_order_id, intent_id)
-        else:
-            supabase.table("webhook_events").update({
-                "status": "IGNORED", "processed_at": received_at
-            }).eq("event_id", event_id).execute()
-            return {"status": "ignored", "reason": "unmapped order"}
-    else:
-        intent_id = order.get("purchase_intent_id")
-
-    # ── Amount validation ─────────────────────────────────────────────
-    amount = int(payment.get("amount") or 0)
-    if order:
-        expected_amount = int(order.get("total_paise") or 0)
-        if amount != expected_amount:
-            supabase.table("webhook_events").update({
-                "status": "ERROR", "error": "amount mismatch", "processed_at": received_at
-            }).eq("event_id", event_id).execute()
-            logger.error("Webhook amount mismatch: got %d, expected %d for order %s", amount, expected_amount, rzp_order_id)
-            raise HTTPException(status_code=400, detail="Validation failed")
-
     # ── Route by event type ───────────────────────────────────────────
     if event == "payment.authorized":
         # Payment authorized but not yet captured — keep as PAYMENT_PENDING
@@ -115,110 +87,47 @@ async def handle_razorpay_webhook(request: Request):
     # ── Determine target state ────────────────────────────────────────
     if event in {"payment.captured", "order.paid"}:
         target_status = "CAPTURED"
-        target_state = "PAYMENT_SUCCESS"
     else:
         target_status = "FAILED"
-        target_state = "PAYMENT_FAILED"
 
-    # ── Persist payment record ────────────────────────────────────────
-    if order:
-        supabase.table("payments").upsert({
-            "payment_id": f"pay_{rzp_payment_id}",
-            "order_id": order["order_id"],
-            "customer_id": order.get("customer_id"),
-            "amount_paise": amount,
-            "currency": payment.get("currency", "INR"),
-            "status": target_status,
-            "method": payment.get("method"),
-            "failure_code": payment.get("error_code"),
-            "failure_reason": payment.get("error_description"),
-            "razorpay_payment_id": rzp_payment_id,
-            "initiated_at": received_at,
-            "completed_at": received_at if target_status == "CAPTURED" else None
-        }, on_conflict="payment_id").execute()
+    # ── Authoritative Payment Resolution ──────────────────────────────
+    from services.payment_resolution import resolve_payment_status
+    amount = int(payment.get("amount") or 0)
+    res = resolve_payment_status(rzp_order_id, rzp_payment_id, amount, target_status, source="webhook")
 
+    if res.get("status") == "error":
+        supabase.table("webhook_events").update({
+            "status": "ERROR", "error": res.get("reason"), "processed_at": received_at
+        }).eq("event_id", event_id).execute()
+        raise HTTPException(status_code=400, detail="Validation failed")
+        
+    if res.get("status") == "ignored":
+        supabase.table("webhook_events").update({
+            "status": "IGNORED", "processed_at": received_at
+        }).eq("event_id", event_id).execute()
+        return {"status": "ignored", "reason": res.get("reason")}
+
+    # Update recommendations if converted
+    if target_status == "CAPTURED" and res.get("state") == "PAYMENT_SUCCESS":
         try:
-            supabase.table("entity_mapping").insert({
-                "synthetic_id": f"pay_{rzp_payment_id}",
-                "entity_type": "payment",
-                "razorpay_id": rzp_payment_id
-            }).execute()
-        except Exception:
-            pass  # Already mapped
-
-    # ── State downgrade protection (Atomic DB Update) ─────────────────
-    if intent_id:
-        current_intent = supabase.table("purchase_intents").select("purchase_state, basket").eq(
-            "purchase_intent_id", intent_id).maybe_single().execute()
-        current_state = (current_intent.data or {}).get("purchase_state", "PAYMENT_PENDING")
-        basket = (current_intent.data or {}).get("basket") or []
-
-        if is_terminal(current_state) and target_state != current_state:
-            # PAYMENT_SUCCESS → PAYMENT_FAILED is NEVER allowed
-            logger.warning(
-                "Blocked state downgrade %s → %s for intent %s",
-                current_state, target_state, intent_id
-            )
-        elif can_transition(current_state, target_state):
-            fulfillment_status = "PENDING"
-            if target_status == "CAPTURED" and order:
-                try:
-                    rpc_res = supabase.rpc("atomic_inventory_decrement", {
-                        "p_order_id": order["order_id"],
-                        "p_intent_id": intent_id,
-                        "p_items": basket
-                    }).execute()
-                    
-                    status_flag = (rpc_res.data or {}).get("status")
-                    if status_flag == "success":
-                        fulfillment_status = "FULFILLED"
-                        logger.info("Inventory successfully decremented for order %s", order["order_id"])
-                    elif status_flag == "already_processed":
-                        fulfillment_status = "FULFILLED"
-                        logger.info("Inventory already decremented for order %s", order["order_id"])
-                    else:
-                        raise Exception(f"Unexpected RPC status: {status_flag}")
-                        
-                except Exception as e:
-                    logger.error("Inventory fulfillment failed for order %s: %s", order["order_id"], str(e))
-                    fulfillment_status = "UNFULFILLED"
-                    from services.refund_service import initiate_refund
-                    initiate_refund(rzp_payment_id, amount, "Inventory unavailable")
-
-            # Enforce atomicity: NEVER overwrite a terminal PAYMENT_SUCCESS with a failure
-            # If the row is already in PAYMENT_SUCCESS, a failure update will affect 0 rows.
-            update_res = supabase.table("purchase_intents").update({
-                "purchase_state": target_state,
-                "razorpay_payment_id": rzp_payment_id,
-                "fulfillment_status": fulfillment_status,
-                "updated_at": received_at
-            }).eq("purchase_intent_id", intent_id).neq("purchase_state", "PAYMENT_SUCCESS").execute()
-            
-            if order:
-                supabase.table("orders").update({
-                    "status": target_status,
-                    "fulfillment_status": fulfillment_status,
-                    "updated_at": received_at
-                }).eq("order_id", order["order_id"]).neq("status", "CAPTURED").execute()
-            
-            # If the update succeeded and we are transitioning to success
-            if update_res.data and target_status == "CAPTURED" and order:
-                intent = supabase.table("purchase_intents").select("recommendation_id").eq(
-                    "purchase_intent_id", intent_id).maybe_single().execute()
-                rec_id = (intent.data or {}).get("recommendation_id")
-                if rec_id:
-                    supabase.table("recommendation_events").update({
-                        "status": "CONVERTED",
-                        "resulting_order_id": order["order_id"],
-                        "revenue_paise": amount
-                    }).eq("recommendation_id", rec_id).eq("status", "ACCEPTED").execute()
-            
-            # If update affected 0 rows, it means the state was concurrently moved to PAYMENT_SUCCESS
-            if not update_res.data and target_state != "PAYMENT_SUCCESS":
-                logger.warning("TOCTOU PREVENTED: Concurrent transition already marked %s as PAYMENT_SUCCESS, blocked downgrade to %s", intent_id, target_state)
-        else:
-            logger.info("No-op transition %s → %s for intent %s",
-                        current_state, target_state, intent_id)
+            # We need intent_id and order_id to update recommendations
+            mapping = (supabase.table("entity_mapping").select("synthetic_id")
+                       .eq("entity_type", "order").eq("razorpay_id", rzp_order_id).limit(1).execute())
+            if mapping.data:
+                order_id = mapping.data[0]["synthetic_id"]
+                order_data = supabase.table("orders").select("purchase_intent_id").eq("order_id", order_id).maybe_single().execute().data
+                if order_data:
+                    intent_id = order_data["purchase_intent_id"]
+                    intent = supabase.table("purchase_intents").select("recommendation_id").eq("purchase_intent_id", intent_id).maybe_single().execute()
+                    rec_id = (intent.data or {}).get("recommendation_id")
+                    if rec_id:
+                        supabase.table("recommendation_events").update({
+                            "status": "CONVERTED",
+                            "resulting_order_id": order_id,
+                            "revenue_paise": amount
+                        }).eq("recommendation_id", rec_id).eq("status", "ACCEPTED").execute()
+        except Exception as e:
+            logger.error("Failed to update recommendation status: %s", e)
 
     log_agent_action(
         agent_name="Webhook", action_type=event,
