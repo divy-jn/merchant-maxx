@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
+import { Activity, ArrowRight, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import './Login.css';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -14,58 +16,36 @@ export default function Login() {
     setLoading(true);
     const success = await login(email, password);
     setLoading(false);
-    if (success) {
-      navigate('/chat');
-    }
+    if (success) navigate('/chat');
   };
 
   return (
-    <div className="flex items-center justify-center min-h-[80vh]">
-      <div className="glass-panel p-8 w-full max-w-md animate-fade-in">
-        <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold mb-2">Welcome Back</h1>
-          <p className="text-[var(--text-muted)]">Sign in to your Merchant Maxx account</p>
+    <div className="login-container">
+      <div className="login-card animate-fade-in">
+        <div className="login-header">
+          <div className="login-mark"><Activity size={22} /></div>
+          <span className="login-eyebrow">MERCHANT MAXX</span>
+          <h1>Welcome back</h1>
+          <p>Sign in to continue to your commerce workspace.</p>
         </div>
 
-        {error && (
-          <div className="bg-[var(--danger)] bg-opacity-20 border border-[var(--danger)] text-[var(--danger)] px-4 py-3 rounded-lg mb-6 text-sm">
-            {error}
-          </div>
-        )}
+        {error && <div className="error-message" role="alert">{error}</div>}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium mb-1">Email</label>
-            <input
-              type="email"
-              required
-              className="w-full bg-[var(--bg-dark)] border border-[var(--border)] rounded-lg px-4 py-2 focus:outline-none focus:border-[var(--accent)] transition-colors"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="admin@merchantmaxx.com"
-            />
+        <form onSubmit={handleSubmit} className="login-form">
+          <div className="form-group">
+            <label htmlFor="email">Email</label>
+            <input id="email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" />
           </div>
-          
-          <div>
-            <label className="block text-sm font-medium mb-1">Password</label>
-            <input
-              type="password"
-              required
-              className="w-full bg-[var(--bg-dark)] border border-[var(--border)] rounded-lg px-4 py-2 focus:outline-none focus:border-[var(--accent)] transition-colors"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-            />
+          <div className="form-group">
+            <div className="label-row"><label htmlFor="password">Password</label></div>
+            <input id="password" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter your password" />
           </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="btn btn-primary w-full mt-6"
-          >
-            {loading ? 'Signing in...' : 'Sign In'}
+          <button type="submit" disabled={loading} className="btn btn-primary login-btn">
+            {loading ? 'Signing in…' : <>Sign in <ArrowRight size={17} /></>}
           </button>
         </form>
+
+        <div className="login-security"><ShieldCheck size={16} /><span>Secure merchant workspace</span></div>
       </div>
     </div>
   );
