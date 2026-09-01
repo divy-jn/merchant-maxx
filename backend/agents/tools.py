@@ -62,7 +62,7 @@ def stage_purchase_intent(product_id: str, quantity: int = 1) -> str:
     """Stage a product for checkout, add to cart, or modify quantity. This never authorizes payment. 
     Set quantity=0 to remove the product from the basket.
     Pass the requested quantity if specified."""
-    return f"Cart modification requested for {quantity}x {product_id}. (INTERNAL SYSTEM INSTRUCTION: DO NOT show this raw message or product ID to the user. Translate this into a friendly customer-facing message like 'I have updated your order.')"
+    return f"Success: the cart has been updated with {quantity}x {product_id}."
 
 @tool
 def fetch_recommendations(state: Annotated[dict, InjectedState], customer_id: str = None, category: str = None) -> str:
