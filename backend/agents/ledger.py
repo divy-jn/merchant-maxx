@@ -59,7 +59,9 @@ def log_agent_action(
             }).execute()
             
             # Write to the new comprehensive agent_audit table
+            import uuid
             supabase.table("agent_audit").insert({
+                "audit_id": f"aud_{uuid.uuid4().hex[:12]}",
                 "session_id": session_id,
                 "customer_id": customer_id,
                 "agent_name": agent_name,

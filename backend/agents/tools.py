@@ -75,8 +75,8 @@ def fetch_recommendations(state: Annotated[dict, InjectedState], customer_id: st
         rows = supabase.table("product_affinity").select("*").eq("product_id", product_id).order("lift_score", desc=True).limit(5).execute().data or []
         candidates = []
         for row in rows:
-            p = (supabase.table("products").select("product_id,name,price_paise,description,inventory_qty,active,category")
-                 .eq("product_id", row["related_product_id"]).eq("merchant_id", "merchant_mxx_001").maybe_single().execute()).data
+            p_res = supabase.table("products").select("product_id,name,price_paise,description,inventory_qty,active,category").eq("product_id", row["related_product_id"]).eq("merchant_id", "merchant_mxx_001").maybe_single().execute()
+            p = getattr(p_res, "data", None) if p_res is not None else None
             if p and p.get("active") and (p.get("inventory_qty") or 0) > 0 and p["product_id"] != product_id: candidates.append((row,p))
         if not candidates:
             # Fallback heuristic: find products in the same category
@@ -271,11 +271,18 @@ def create_razorpay_order(state: Annotated[dict, InjectedState], customer_email:
                 "razorpay_id": rzp_order["id"]
             }).execute()
         except Exception as exc:
+            # Check for Postgres unique violation on purchase_intent_id (code 23505)
+            is_intent_conflict = hasattr(exc, "code") and exc.code == "23505" and "uq_orders_purchase_intent" in str(getattr(exc, "message", ""))
+            if is_intent_conflict:
+                logger.info("Idempotent duplicate creation detected for intent %s", intent_id)
+                # Ensure local recovery happens now to satisfy the duplicated request
+                from services.payment_resolution import _recover_local_order
+                _recover_local_order(intent_id, rzp_order["id"], intent.get("customer_id"), total, validated, subtotal, discount, tax)
+                return (f"Razorpay Order already exists. Order ID: {rzp_order['id']}\n"
+                        f"Amount: Rs.{total/100:,.2f}\n"
+                        f"Payment is pending; verify Razorpay status before treating it as successful.")
             logger.error("CRITICAL GHOST ORDER AVOIDANCE: Local order mapping failed for intent %s, rzp_order %s: %s", intent_id, rzp_order["id"], exc)
-            # DO NOT ROLLBACK RAZORPAY_ORDER_ID.
-            # Just leave the intent as PAYMENT_PENDING with the valid Razorpay Order ID.
-            # Webhooks or a retry will trigger `_recover_local_order`.
-            return "Order creation partially completed. Razorpay order exists but local mapping timed out. System will recover automatically."
+            return "FATAL_ERROR: Order creation partially completed. Razorpay order exists but local mapping timed out. System will recover automatically."
 
         return (f"Razorpay Order created successfully. Order ID: {rzp_order['id']}\n"
                 f"Amount: Rs.{total/100:,.2f}\n"
@@ -293,7 +300,7 @@ def create_razorpay_order(state: Annotated[dict, InjectedState], customer_email:
             supabase.table("purchase_intents").update({"purchase_state": "USER_CONFIRMED"}).eq("purchase_intent_id", intent_id).eq("purchase_state", "ORDER_CREATING").execute()
         except Exception:
             pass
-        return "Order creation failed due to a temporary error. Please try again."
+        return "FATAL_ERROR: Order creation failed due to a temporary error."
 
 @tool
 def check_payment_status(state: Annotated[dict, InjectedState]) -> str:
@@ -307,9 +314,8 @@ def check_payment_status(state: Annotated[dict, InjectedState]) -> str:
     if not iid or not supabase:
         return "Unable to inspect payment state."
     try:
-        intent = (supabase.table("purchase_intents")
-                  .select("*").eq("purchase_intent_id", iid)
-                  .maybe_single().execute()).data
+        intent_res = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", iid).maybe_single().execute()
+        intent = getattr(intent_res, "data", None) if intent_res is not None else None
         if not intent or not intent.get("razorpay_order_id"):
             return "No Razorpay order exists for this purchase intent."
 
@@ -355,7 +361,8 @@ def reset_purchase_intent(state: Annotated[dict, InjectedState]) -> str:
     old_id = (state.get("purchase_context") or {}).get("purchase_intent_id")
     if not old_id: return "No purchase intent to reset."
     try:
-        old = (supabase.table("purchase_intents").select("*").eq("purchase_intent_id", old_id).maybe_single().execute()).data
+        old_res = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", old_id).maybe_single().execute()
+        old = getattr(old_res, "data", None) if old_res is not None else None
         if not old or old.get("purchase_state") not in {"PAYMENT_FAILED", "PAYMENT_UNKNOWN", "RECOVERY_PENDING"}: return "Reset blocked: payment state has not been resolved."
         new_id = f"pi_{uuid.uuid4().hex[:12]}"; row = {k: old.get(k) for k in ("conversation_id", "customer_id", "merchant_id", "basket", "subtotal_paise", "discount_paise", "tax_paise", "amount_paise")}; row.update({"purchase_intent_id": new_id, "purchase_state": "PURCHASE_PENDING", "user_confirmed": False})
         supabase.table("purchase_intents").insert(row).execute()

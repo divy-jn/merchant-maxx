@@ -58,7 +58,7 @@ def verify_conversation_ownership(conv_id: str, current_user: dict):
 
 def _load_active_intent(conv_id: str):
     result = (supabase.table("purchase_intents").select("*").eq("conversation_id", conv_id)
-              .in_("purchase_state", ["PURCHASE_PENDING", "RECOMMENDATION_SHOWN", "USER_CONFIRMED", "RECOVERY_PENDING", "PAYMENT_FAILED", "PAYMENT_UNKNOWN", "PRODUCT_SELECTED"])
+              .in_("purchase_state", ["PURCHASE_PENDING", "RECOMMENDATION_SHOWN", "USER_CONFIRMED", "RECOVERY_PENDING", "PAYMENT_FAILED", "PAYMENT_UNKNOWN", "PRODUCT_SELECTED", "ORDER_CREATING", "ORDER_CREATED", "PAYMENT_PENDING"])
               .order("created_at", desc=True).limit(1).execute())
     return result.data[0] if result.data else None
 
@@ -78,7 +78,8 @@ def _accept_latest_recommendation(intent: dict):
         basket.append({"product_id": product["product_id"], "quantity": 1})
     subtotal = 0
     for item in basket:
-        p = (supabase.table("products").select("price_paise").eq("product_id", item["product_id"]).maybe_single().execute()).data
+        p_res = supabase.table("products").select("price_paise").eq("product_id", item["product_id"]).maybe_single().execute()
+        p = getattr(p_res, "data", None) if p_res is not None else None
         if p: subtotal += int(p["price_paise"]) * int(item.get("quantity", 1))
     now = datetime.now(timezone.utc).isoformat()
     supabase.table("recommendation_events").update({"status": "ACCEPTED", "accepted_at": now}).eq("recommendation_id", rec["recommendation_id"]).execute()

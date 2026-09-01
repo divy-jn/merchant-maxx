@@ -79,7 +79,12 @@ def route_after_merger(state: AgentState):
 
 
 def route_after_tools(state: AgentState):
-    last_ai = next((m for m in reversed(state.get("messages", [])) if isinstance(m, AIMessage) and getattr(m, "tool_calls", None)), None)
+    messages = state.get("messages", [])
+    if messages and getattr(messages[-1], "type", "") == "tool" and "FATAL_ERROR" in str(messages[-1].content):
+        return END
+    return route_next_node(state)
+
+    last_ai = next((m for m in reversed(messages) if isinstance(m, AIMessage) and getattr(m, "tool_calls", None)), None)
     if not last_ai:
         return "scout"
     names = {tc["name"] for tc in last_ai.tool_calls}
@@ -125,7 +130,7 @@ for node in ("closer", "campaigner"):
     })
 
 workflow.add_conditional_edges("tools", route_after_tools, {
-    "scout": "scout", "booster": "booster", "closer": "closer", "campaigner": "campaigner",
+    "scout": "scout", "booster": "booster", "closer": "closer", "campaigner": "campaigner", END: END
 })
 
 # MemorySaver preserves conversational graph state within the process. Supabase purchase_intents is authoritative for money state.

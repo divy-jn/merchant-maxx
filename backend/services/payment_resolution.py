@@ -23,7 +23,8 @@ def resolve_payment_status(rzp_order_id: str, rzp_payment_id: str, amount_paise:
     intent_id = None
     
     if mapping.data:
-        order = (lambda r: getattr(r, "data", None))(supabase.table("orders").select("*").eq("order_id", mapping.data[0]["synthetic_id"]).maybe_single().execute())
+        order_res = supabase.table("orders").select("*").eq("order_id", mapping.data[0]["synthetic_id"]).maybe_single().execute()
+        order = getattr(order_res, "data", None) if order_res is not None else None
         if order:
             intent_id = order.get("purchase_intent_id")
     
@@ -37,7 +38,8 @@ def resolve_payment_status(rzp_order_id: str, rzp_payment_id: str, amount_paise:
         logger.warning("Unmapped order %s - cannot resolve payment", rzp_order_id)
         return {"status": "ignored", "reason": "unmapped order"}
         
-    intent_data = (lambda r: getattr(r, "data", None))(supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent_id).maybe_single().execute())
+    intent_res = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent_id).maybe_single().execute()
+    intent_data = getattr(intent_res, "data", None) if intent_res is not None else None
     if not intent_data:
         return {"status": "ignored", "reason": "intent not found"}
 
@@ -151,7 +153,8 @@ def _recover_local_order(intent_id, rzp_order_id, customer_id, expected_amount, 
     """Deterministically recovers the local order mapping for a Razorpay order ID."""
     import uuid
     # Double check if it was created concurrently
-    existing = (lambda r: getattr(r, "data", None))(supabase.table("orders").select("*").eq("purchase_intent_id", intent_id).maybe_single().execute())
+    existing_res = supabase.table("orders").select("*").eq("purchase_intent_id", intent_id).maybe_single().execute()
+    existing = getattr(existing_res, "data", None) if existing_res is not None else None
     if existing:
         return existing
         
