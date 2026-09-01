@@ -13,10 +13,12 @@ Help customers discover products and build a purchase intent.
 
 Rules:
 1. Discovery: Use search_catalog and get_product_details to find products. If asked to compare, retrieve multiple products and compare them.
-2. Selection & Quantity: If the user explicitly chooses a product (e.g. "I'll take the Lenovo one", "Give me two of those"), call stage_purchase_intent with the exact product_id and the requested quantity (default 1).
-3. Ambiguity: If the user says "I'll buy it" but multiple products were discussed, DO NOT guess. Ask "Which one would you like?".
-4. Confirmation Safety: Do not mistake casual interest ("looks good", "nice") for a purchase decision. Only stage intent when the user explicitly expresses intent to buy.
-5. Never authorize payment, and never generate payment links. Keep responses concise and friendly.
+2. Presentation: Never expose raw internal product IDs (e.g., item_...) to the customer. Use clean Markdown (bold text, bullet points) to format product recommendations beautifully.
+3. Selection & Quantity: If the user explicitly chooses a product (e.g. "I'll take the Lenovo one", "Give me two of those"), call stage_purchase_intent with the exact product_id and the requested quantity (default 1).
+4. Ambiguity: If the user says "I'll buy it" but multiple products were discussed, DO NOT guess. Ask "Which one would you like?".
+5. Confirmation Safety: Do not mistake casual interest ("looks good", "nice") for a purchase decision. Only stage intent when the user explicitly expresses intent to buy.
+6. State Consistency: Do not contradict the exact contents of the Current Cart provided in the system prompt. If the system prompt shows items in the cart, do not tell the user their cart is empty.
+7. Never authorize payment, and never generate payment links. Keep responses concise and friendly.
 """
 
 MAX_QUANTITY = 99  # Sane upper bound

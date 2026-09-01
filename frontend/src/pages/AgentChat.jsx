@@ -1,12 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Trash2, CreditCard, Sparkles, Plus, MessageSquare, Search, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Send, Trash2, CreditCard, Sparkles, Plus, MessageSquare, Search, PanelLeftClose, PanelLeftOpen, ShieldCheck } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 import { API_BASE_URL } from '../config';
 import { useAuth } from '../context/AuthContext';
 import './AgentChat.css';
 
 const RAZORPAY_KEY_ID = import.meta.env.VITE_RAZORPAY_KEY_ID || '';
-const ORDER_ID_REGEX = /Order ID:\s*(order_\w+)/i;
-const AMOUNT_REGEX = /Amount:\s*Rs\.\s*([\d,]+\.\d{2})/i;
 const WELCOME = 'Hi! I\'m MAXX, your AI shopping assistant at Merchant Maxx. I can help you discover products, compare options, and complete purchases.';
 
 function titleForConversation(conversation) {
@@ -120,9 +119,12 @@ export default function AgentChat({ sessionId = 'guest' }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Message failed');
       if (data.conversation_id && data.conversation_id !== currentConvId) setCurrentConvId(data.conversation_id);
-      const botText = data.response || 'Sorry, something went wrong.'; setMessages(prev => [...prev, { sender: 'bot', text: botText }]);
-      const orderMatch = botText.match(ORDER_ID_REGEX); const amountMatch = botText.match(AMOUNT_REGEX);
-      if (orderMatch?.[1]) setTimeout(() => setMessages(prev => [...prev, { sender: 'bot', text: `__PAY_BUTTON__${orderMatch[1]}__${amountMatch?.[1] || ''}`, isPayButton: true }]), 300);
+      
+      const newMsg = { sender: 'bot', text: data.response || 'Sorry, something went wrong.' };
+      if (data.checkout_data) {
+        newMsg.checkout_data = data.checkout_data;
+      }
+      setMessages(prev => [...prev, newMsg]);
       await loadConversations();
     } catch (err) { setMessages(prev => [...prev, { sender: 'bot', text: err.message || 'Connection error. Please try again.' }]); }
     finally { setLoading(false); }
@@ -139,12 +141,42 @@ export default function AgentChat({ sessionId = 'guest' }) {
   };
 
   const renderMessageText = (text, msg) => {
-    if (msg?.isPayButton) {
-      const parts = text.replace('__PAY_BUTTON__', '').split('__'); const orderId = parts[0]; const amount = parts[1] || '';
-      return <button className="btn btn-primary pay-now-btn" onClick={() => openCheckout(orderId, amount)} disabled={paymentInProgress}><CreditCard size={18} />{paymentInProgress ? 'Processing…' : `Pay now${amount ? ` · ₹${amount}` : ''}`}</button>;
+    if (msg?.checkout_data) {
+      const d = msg.checkout_data;
+      const formattedAmount = (d.amount_paise / 100).toLocaleString('en-IN', { style: 'currency', currency: 'INR' });
+      return (
+        <div className="checkout-card animate-fade-in">
+          <div className="checkout-header">
+            <h4>ORDER READY</h4>
+          </div>
+          <div className="checkout-items">
+            {d.items && d.items.map((item, i) => (
+              <div key={i} className="checkout-item-row">
+                <span className="item-name">{item.name}</span>
+                <span className="item-qty">Qty {item.quantity}</span>
+              </div>
+            ))}
+          </div>
+          <div className="checkout-total">
+            <span>Total</span>
+            <strong>{formattedAmount}</strong>
+          </div>
+          <div className="checkout-secure-badge">
+            <ShieldCheck size={14} /> Secure payment via Razorpay
+          </div>
+          <button className="btn btn-primary pay-now-btn" onClick={() => openCheckout(d.order_id, d.amount_paise / 100)} disabled={paymentInProgress}>
+            <CreditCard size={18} />
+            {paymentInProgress ? 'Processing…' : `Pay ${formattedAmount}`}
+          </button>
+        </div>
+      );
     }
-    const urlRegex = /(https?:\/\/[^\s\)\]\>,]+)/g;
-    return text.split(urlRegex).map((part, i) => part.match(/^https?:\/\//) ? <a key={i} href={part.replace(/[)}\].,;:!?]+$/, '')} target="_blank" rel="noopener noreferrer">{part}</a> : part);
+    
+    if (msg?.sender === 'user') {
+      return text;
+    }
+    
+    return <ReactMarkdown className="markdown-body">{text}</ReactMarkdown>;
   };
 
   const filteredConversations = conversations.filter(c => titleForConversation(c).toLowerCase().includes(search.trim().toLowerCase()));
@@ -178,7 +210,7 @@ export default function AgentChat({ sessionId = 'guest' }) {
         </div>
         <div className="chat-box glass-panel">
           <div className="messages-list">
-            {messages.map((msg, idx) => <div key={idx} className={`message-item ${msg.sender}`}><div className="message-bubble">{msg.sender === 'bot' && !msg.isPayButton && <span className="agent-label">MAXX · AI ASSISTANT</span>}{renderMessageText(msg.text, msg)}</div></div>)}
+            {messages.map((msg, idx) => <div key={idx} className={`message-item ${msg.sender}`}><div className={`message-bubble ${msg.checkout_data ? 'checkout-bubble' : ''}`}>{msg.sender === 'bot' && !msg.checkout_data && <span className="agent-label">MAXX · AI ASSISTANT</span>}{renderMessageText(msg.text, msg)}</div></div>)}
             {loading && <div className="message-item bot"><div className="typing-indicator"><span></span><span></span><span></span> MAXX is thinking</div></div>}
             <div ref={messagesEndRef} />
           </div>

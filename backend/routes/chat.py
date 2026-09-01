@@ -13,11 +13,25 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 class ChatRequest(BaseModel):
     message: str
     conversation_id: Optional[str] = None
+class CheckoutItem(BaseModel):
+    product_id: str
+    name: str
+    quantity: int
+    unit_price_paise: int
+
+class CheckoutData(BaseModel):
+    type: str = "checkout"
+    order_id: str
+    amount_paise: int
+    currency: str = "INR"
+    items: list[CheckoutItem]
+
 class ChatResponse(BaseModel):
     response: str
     conversation_id: str
+    checkout_data: Optional[CheckoutData] = None
 
-CONFIRM_RE = re.compile(r"^(yes|y|yeah|yep|sure|okay|ok|proceed|go ahead|do it|confirm|confirmed|place it|buy it)\s*[.!]*$", re.I)
+CONFIRM_RE = re.compile(r"^(yes|y|yeah|yep|sure|okay|ok|proceed|go ahead|do it|confirm|confirmed|place it|buy it|i want to buy it|purchase it|complete the order|pay now|checkout)\s*[.!]*$", re.I)
 
 def verify_conversation_ownership(conv_id: str, current_user: dict):
     if not conv_id or conv_id == "guest":
@@ -151,7 +165,33 @@ def chat_with_maxx(req: ChatRequest, current_user: dict = Depends(get_current_us
         supabase.table("recommendation_events").update({"status": "SHOWN", "shown_at": now_str}).eq("session_id", conv_id).eq("status", "GENERATED").execute()
         
         supabase.table("messages").insert({"conversation_id": conv_id, "role": "assistant", "content": str(response)}).execute()
-        return ChatResponse(response=str(response), conversation_id=conv_id)
+        
+        # Determine structured checkout data by inspecting fresh state
+        checkout_data = None
+        if intent:
+            fresh_intent_res = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent["purchase_intent_id"]).maybe_single().execute()
+            fresh_intent = fresh_intent_res.data if fresh_intent_res else None
+            if fresh_intent and fresh_intent.get("purchase_state") in {"PAYMENT_PENDING", "PAYMENT_FAILED", "ORDER_CREATED"} and fresh_intent.get("razorpay_order_id"):
+                basket = fresh_intent.get("basket") or []
+                items = []
+                for b_item in basket:
+                    pid = b_item["product_id"]
+                    qty = b_item.get("quantity", 1)
+                    p_res = supabase.table("products").select("name,price_paise").eq("product_id", pid).maybe_single().execute()
+                    p_data = p_res.data if p_res else {}
+                    items.append({
+                        "product_id": pid,
+                        "name": p_data.get("name", pid),
+                        "quantity": qty,
+                        "unit_price_paise": p_data.get("price_paise", 0)
+                    })
+                checkout_data = CheckoutData(
+                    order_id=fresh_intent["razorpay_order_id"],
+                    amount_paise=fresh_intent["amount_paise"],
+                    items=items
+                )
+
+        return ChatResponse(response=str(response), conversation_id=conv_id, checkout_data=checkout_data)
     except HTTPException:
         raise
     except Exception as exc:
@@ -163,7 +203,35 @@ def get_chat_history(conversation_id: str = None, current_user: dict = Depends(g
     if not supabase or not conversation_id or conversation_id == "guest": return []
     verify_conversation_ownership(conversation_id, current_user)
     res = supabase.table("messages").select("*").eq("conversation_id", conversation_id).order("created_at", desc=False).execute()
-    return [{"sender": "user" if m["role"] == "user" else "bot", "text": m["content"]} for m in res.data]
+    messages = [{"sender": "user" if m["role"] == "user" else "bot", "text": m["content"]} for m in res.data]
+    
+    intent = _load_active_intent(conversation_id)
+    if intent and intent.get("purchase_state") in {"PAYMENT_PENDING", "PAYMENT_FAILED", "ORDER_CREATED"} and intent.get("razorpay_order_id"):
+        basket = intent.get("basket") or []
+        items = []
+        for b_item in basket:
+            pid = b_item["product_id"]
+            qty = b_item.get("quantity", 1)
+            p_res = supabase.table("products").select("name,price_paise").eq("product_id", pid).maybe_single().execute()
+            p_data = p_res.data if p_res else {}
+            items.append({
+                "product_id": pid,
+                "name": p_data.get("name", pid),
+                "quantity": qty,
+                "unit_price_paise": p_data.get("price_paise", 0)
+            })
+        messages.append({
+            "sender": "bot",
+            "text": "Your order is ready for payment.",
+            "checkout_data": {
+                "type": "checkout",
+                "order_id": intent["razorpay_order_id"],
+                "amount_paise": intent["amount_paise"],
+                "currency": "INR",
+                "items": items
+            }
+        })
+    return messages
 
 @router.delete("/history")
 def clear_chat_history(conversation_id: str, current_user: dict = Depends(get_current_user)):

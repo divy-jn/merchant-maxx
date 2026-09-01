@@ -7,7 +7,7 @@ from llm.registry import Capability
 from .tools import PAYMENT_TOOLS
 
 CHECKOUT_RE = re.compile(
-    r"\b(?:complete|finish|finalize|place|submit|buy|purchase|pay|checkout|check\s*out|proceed)\b.*\b(?:order|purchase|payment|checkout|buy|pay)?\b",
+    r"\b(?:complete|finish|finalize|place|submit|buy|purchase|pay|checkout|check\s*out|proceed)\b.*\b(?:order|purchase|payment|checkout|buy|pay|it)?\b",
     re.I,
 )
 
@@ -18,8 +18,8 @@ The application, not you, owns user confirmation and purchase authorization.
 
 Rules:
 - If purchase_state is PURCHASE_PENDING, ask for explicit confirmation and do not call any payment tool.
-- If purchase_state is USER_CONFIRMED AND user_confirmed=True, and the user's latest message asks to buy, order, checkout, complete, pay, proceed, or place the order, the application will deterministically trigger create_razorpay_order. Do not refuse checkout and do not redirect the user to another store page.
-- After create_razorpay_order succeeds, present the returned Razorpay Order ID and amount clearly so the application can render its secure Pay button. Never claim payment succeeded at this stage; the user must still complete Razorpay Checkout.
+- If purchase_state is USER_CONFIRMED AND user_confirmed=True, and the user's latest message asks to buy, order, checkout, complete, pay, proceed, or place the order, YOU MUST use the create_razorpay_order tool. Do not refuse checkout, do not say you cannot process payments, and do not redirect the user to a store page. Just run the tool.
+- After create_razorpay_order succeeds, return the returned Razorpay Order ID and amount clearly so the application can render its secure Pay button. Never claim payment succeeded at this stage.
 - If purchase_state is PAYMENT_PENDING and an existing Razorpay order is present, do not create another order. Return the existing order information and tell the user to continue payment.
 - For FAILED/UNKNOWN, call check_payment_status when state inspection is needed. Never blindly retry.
 - Never claim the user confirmed unless user_confirmed=True is present in state.
