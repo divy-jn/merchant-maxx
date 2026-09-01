@@ -80,7 +80,7 @@ def fetch_recommendations(state: Annotated[dict, InjectedState], customer_id: st
             if p and p.get("active") and (p.get("inventory_qty") or 0) > 0 and p["product_id"] != product_id: candidates.append((row,p))
         if not candidates:
             # Fallback heuristic: find products in the same category
-            cat_res = supabase.table("products").select("category").eq("product_id", product_id).maybe_single().execute().data
+            cat_res = (lambda r: getattr(r, "data", None))(supabase.table("products").select("category").eq("product_id", product_id).maybe_single().execute())
             if cat_res and cat_res.get("category"):
                 fallback = supabase.table("products").select("product_id,name,price_paise,description,inventory_qty,active,category").eq("category", cat_res["category"]).neq("product_id", product_id).limit(2).execute().data or []
                 for p in fallback:

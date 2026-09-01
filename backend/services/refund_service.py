@@ -42,7 +42,7 @@ def initiate_refund(payment_id: str, razorpay_payment_id: str, order_id: str, cu
         # Check if it was a unique constraint violation (idempotency key)
         if "duplicate key" in str(e) or "unique constraint" in str(e).lower() or "23505" in str(e):
             logger.info("Refund idempotency caught: refund already exists for %s", idempotency_key)
-            existing = supabase.table("refunds").select("*").eq("idempotency_key", idempotency_key).maybe_single().execute().data
+            existing = (lambda r: getattr(r, "data", None))(supabase.table("refunds").select("*").eq("idempotency_key", idempotency_key).maybe_single().execute())
             if existing:
                 return {"status": existing.get("status"), "refund_id": existing.get("refund_id")}
         
@@ -89,7 +89,7 @@ def initiate_refund(payment_id: str, razorpay_payment_id: str, order_id: str, cu
 
 def check_refund_status(refund_id: str) -> dict:
     """Reconcile an UNKNOWN refund by querying Razorpay."""
-    ref = supabase.table("refunds").select("*").eq("refund_id", refund_id).maybe_single().execute().data
+    ref = (lambda r: getattr(r, "data", None))(supabase.table("refunds").select("*").eq("refund_id", refund_id).maybe_single().execute())
     if not ref:
         return {"status": "error", "reason": "not_found"}
         
@@ -99,7 +99,7 @@ def check_refund_status(refund_id: str) -> dict:
     razorpay_payment_id = ref.get("razorpay_payment_id")
     if not razorpay_payment_id:
         # If we didn't save it, we must derive it
-        payment = supabase.table("payments").select("razorpay_payment_id").eq("payment_id", ref["payment_id"]).maybe_single().execute().data
+        payment = (lambda r: getattr(r, "data", None))(supabase.table("payments").select("razorpay_payment_id").eq("payment_id", ref["payment_id"]).maybe_single().execute())
         if payment:
             razorpay_payment_id = payment.get("razorpay_payment_id")
             

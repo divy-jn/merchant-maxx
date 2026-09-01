@@ -23,7 +23,7 @@ def resolve_payment_status(rzp_order_id: str, rzp_payment_id: str, amount_paise:
     intent_id = None
     
     if mapping.data:
-        order = supabase.table("orders").select("*").eq("order_id", mapping.data[0]["synthetic_id"]).maybe_single().execute().data
+        order = (lambda r: getattr(r, "data", None))(supabase.table("orders").select("*").eq("order_id", mapping.data[0]["synthetic_id"]).maybe_single().execute())
         if order:
             intent_id = order.get("purchase_intent_id")
     
@@ -37,7 +37,7 @@ def resolve_payment_status(rzp_order_id: str, rzp_payment_id: str, amount_paise:
         logger.warning("Unmapped order %s - cannot resolve payment", rzp_order_id)
         return {"status": "ignored", "reason": "unmapped order"}
         
-    intent_data = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent_id).maybe_single().execute().data
+    intent_data = (lambda r: getattr(r, "data", None))(supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent_id).maybe_single().execute())
     if not intent_data:
         return {"status": "ignored", "reason": "intent not found"}
 
@@ -151,7 +151,7 @@ def _recover_local_order(intent_id, rzp_order_id, customer_id, expected_amount, 
     """Deterministically recovers the local order mapping for a Razorpay order ID."""
     import uuid
     # Double check if it was created concurrently
-    existing = supabase.table("orders").select("*").eq("purchase_intent_id", intent_id).maybe_single().execute().data
+    existing = (lambda r: getattr(r, "data", None))(supabase.table("orders").select("*").eq("purchase_intent_id", intent_id).maybe_single().execute())
     if existing:
         return existing
         

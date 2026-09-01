@@ -115,7 +115,7 @@ async def handle_razorpay_webhook(request: Request):
                        .eq("entity_type", "order").eq("razorpay_id", rzp_order_id).limit(1).execute())
             if mapping.data:
                 order_id = mapping.data[0]["synthetic_id"]
-                order_data = supabase.table("orders").select("purchase_intent_id").eq("order_id", order_id).maybe_single().execute().data
+                order_data = (lambda r: getattr(r, "data", None))(supabase.table("orders").select("purchase_intent_id").eq("order_id", order_id).maybe_single().execute())
                 if order_data:
                     intent_id = order_data["purchase_intent_id"]
                     intent = supabase.table("purchase_intents").select("recommendation_id").eq("purchase_intent_id", intent_id).maybe_single().execute()
