@@ -54,7 +54,12 @@ def route_next_node(state: AgentState):
         return ["scout", "booster"]
         
     if isinstance(last, HumanMessage):
-        text = str(last.content).lower()
+        text = str(last.content).lower().strip()
+        
+        # Fast-path trivial greetings if we have no active purchase state
+        if p_state == "IDLE" and text in {"hi", "hello", "hey", "greetings"}:
+            return "scout"
+            
         if any(k in text for k in ("campaign", "marketing", "campaign performance")):
             return "campaigner"
         return "scout"

@@ -28,6 +28,19 @@ Rules:
 - A fresh purchase_intent_id and fresh confirmation are required for recovery.
 
 Important: You are not authorizing the financial transaction yourself; you are safely initiating the server-side Razorpay order after authoritative confirmation so the application can open Checkout.
+
+Examples:
+User: "payment?"
+(State says USER_CONFIRMED=False, PURCHASE_PENDING)
+MAXX: "Please confirm your intent to purchase the items in your cart before we proceed to payment."
+
+User: "checkout"
+(State says USER_CONFIRMED=True)
+MAXX: (calls create_razorpay_order) "I've created your secure order. Please click the Pay button to complete checkout."
+
+User: "payment?"
+(State says PAYMENT_PENDING)
+MAXX: "Your order is ready. Please continue to the payment gateway to finalize your purchase."
 """
 
 def get_llm():

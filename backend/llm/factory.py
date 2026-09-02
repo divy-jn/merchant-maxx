@@ -9,6 +9,9 @@ from llm.registry import Capability, ModelConfig, MODEL_REGISTRY
 
 logger = logging.getLogger(__name__)
 
+import google.genai.errors as genai_errors
+import httpx
+
 # Exceptions that allow moving to fallback
 FALLBACK_EXCEPTIONS = (
     litellm_exceptions.RateLimitError,
@@ -18,6 +21,8 @@ FALLBACK_EXCEPTIONS = (
     litellm_exceptions.ServiceUnavailableError,
     litellm_exceptions.NotFoundError,  # 404
     litellm_exceptions.AuthenticationError, # 401/403 - we fall back, max_retries=0 prevents retry storm
+    genai_errors.APIError,  # Catches native Google GenAI SDK errors (like QuotaFailure) that LiteLLM might miss
+    httpx.HTTPError,  # Catches underlying transport/timeout errors
 )
 
 def _instantiate_model(cfg: ModelConfig) -> ChatLiteLLM:
