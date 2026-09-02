@@ -77,12 +77,13 @@ def closer_node(state: dict):
     from langchain_core.messages import merge_message_runs, HumanMessage
     messages_to_invoke = merge_message_runs([messages[0], state_view] + messages[1:])
     
-    # Gemini throws 400 Bad Request "Requests ending with a model turn are not supported" 
+    # Originally added because Gemini throws 400 Bad Request "Requests ending with a model turn are not supported" 
     # if the history ends with an AIMessage.
     # Since scout/booster outputs are AIMessages, closer will frequently encounter this.
+    # We keep this safeguard for when LLM_PROVIDER=gemini is active.
     
     # Pre-process messages to flatten any complex list content in AIMessages into strings
-    # This prevents LiteLLM from crashing during _transform_messages
+    # This ensures compatibility with the Gemini API wrappers during _transform_messages
     for m in messages_to_invoke:
         if isinstance(m, AIMessage) and isinstance(m.content, list):
             m.content = "".join(str(b.get("text", "")) for b in m.content if isinstance(b, dict))

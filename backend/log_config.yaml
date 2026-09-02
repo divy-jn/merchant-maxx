@@ -1,0 +1,23 @@
+version: 1
+disable_existing_loggers: False
+formatters:
+  default:
+    "()": "uvicorn.logging.DefaultFormatter"
+    fmt: "%(levelprefix)s %(message)s"
+    use_colors: None
+handlers:
+  default:
+    formatter: default
+    class: logging.StreamHandler
+    stream: "ext://sys.stdout"
+loggers:
+  "":
+    handlers:
+      - default
+    level: INFO
+  uvicorn.error:
+    level: INFO
+  uvicorn.access:
+    level: INFO
+  utils.telemetry:
+    level: INFO

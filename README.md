@@ -6,7 +6,7 @@ Merchant Maxx is a production-grade, highly resilient AI e-commerce platform bui
 
 * **Backend**: FastAPI & Python 3.11+
 * **AI Orchestration**: LangGraph (Multi-Agent System) & LangChain
-* **LLM Gateway**: LiteLLM (Gemini & OpenRouter Fallbacks)
+* **LLM Gateway**: Direct Gemini Integration
 * **Database & Auth**: Supabase (PostgreSQL)
 * **Payments**: Razorpay
 * **Hosting**: Google Cloud Run (Backend) & Vercel (Frontend)
@@ -31,7 +31,12 @@ We implemented a multi-layered, idempotent transaction recovery system to ensure
 
 ### 2. Autonomous Multi-Model Fallback
 The AI pipeline is protected against vendor outages and rate limits:
-* **Strict 4-Model Fallback**: The system falls back instantly across `Gemini 1.5 Flash (Tier 1)` -> `Gemini 1.5 Flash (Tier 2)` -> `Gemini 1.5 Pro` -> `Nemotron 340B (OpenRouter)`.
+* **LLM Integration**: Direct Gemini integration
+* **Multi-Agent Orchestration**: LangGraph (Scout, Booster, Merger, Closer, Campaigner)
+* **Vector Database**: Pinecone
+* **Relational Database**: Supabase (PostgreSQL with Row Level Security)
+* **Payment Gateway**: Razorpay Test Mode
+* **Testing**: Pytest + custom local memory fallback mocks
 * **Zero-Timeout Failover**: By intercepting and normalizing HTTP 429 Quota Exhaustion errors, the backend triggers fallback instantly without sleeping, preventing Cloud Run 504 timeouts.
 
 ### 3. Fortified Database Security (RLS)

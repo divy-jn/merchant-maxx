@@ -8,6 +8,9 @@ load_dotenv()
 
 BASE_URL = os.environ.get("API_URL", "http://localhost:8000")
 
+import pytest
+
+@pytest.mark.skipif(os.environ.get("RUN_LIVE_LLM_TESTS") != "true", reason="Requires real LLM")
 async def test_agent_flow():
     print("=== Starting E2E Tests ===")
     

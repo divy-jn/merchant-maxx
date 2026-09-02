@@ -52,9 +52,14 @@ def test_acp_discovery_endpoints_implemented():
     
     assert response.status_code == 200, "Discovery endpoint failed"
     discovery_data = response.json()
-    
     # Get all registered routes
-    registered_routes = [route.path for route in app.routes]
+    registered_routes = []
+    for route in app.routes:
+        if hasattr(route, "path"):
+            registered_routes.append(route.path)
+        elif hasattr(route, "routes"):
+            for r in route.routes:
+                registered_routes.append(getattr(route, "path", "") + getattr(r, "path", ""))
     
     for capability in discovery_data.get("capabilities", []):
         endpoint = capability.get("endpoint")

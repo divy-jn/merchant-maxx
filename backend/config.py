@@ -6,13 +6,22 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 class Settings(BaseSettings):
     # LLM Settings
-    LLM_PRIMARY_PROVIDER: str = "gemini"
-    LLM_PRIMARY_MODEL: str = "gemini-3.7-flash"
-    LLM_FALLBACK_PROVIDERS: str = "openrouter"
-    ALLOW_PAID_LLM: bool = False
+    LLM_PROVIDER: str = "openai"
     
-    LLM_API_KEY: str = ""  # General fallback (e.g. Gemini)
-    OPENROUTER_API_KEY: str = ""
+    # OpenAI Settings
+    OPENAI_MODEL: str = "gpt-4o-mini"
+    OPENAI_API_KEY: str = ""
+    OPENAI_TEMPERATURE: float = 0.0
+    OPENAI_MAX_RETRIES: int = 0
+    OPENAI_TIMEOUT: int = 30
+
+    # Gemini Settings
+    GEMINI_MODEL: str = "gemini-3.7-flash"
+    GEMINI_API_KEY: str = ""
+    GEMINI_TEMPERATURE: float = 0.0
+    GEMINI_MAX_RETRIES: int = 0
+    GEMINI_TIMEOUT: int = 30
+
 
     # Razorpay Settings
     RAZORPAY_KEY_ID: str = ""

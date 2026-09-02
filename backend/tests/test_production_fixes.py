@@ -137,14 +137,15 @@ def test_load_active_intent_states(mock_intent):
     intent2 = _load_active_intent(conv_id)
     assert intent2 is None
     
+@patch("agents.closer.get_llm")
 @patch("agents.tools.supabase.table")
-def test_create_razorpay_order_fatal_error_stops_graph(mock_table, mock_intent):
+def test_create_razorpay_order_fatal_error_stops_graph(mock_table, mock_get_llm, mock_intent):
     iid, conv_id = mock_intent
     
     # Mock an unrecoverable exception
     mock_table.side_effect = Exception("Simulated DB Crash")
     
-    from langchain_core.messages import HumanMessage, ToolCall
+    from langchain_core.messages import HumanMessage, AIMessage, ToolCall
     from agents.tools import ALL_TOOLS
     import uuid
     
@@ -154,7 +155,7 @@ def test_create_razorpay_order_fatal_error_stops_graph(mock_table, mock_intent):
         "messages": [
             HumanMessage(content="checkout"),
             # Mock the AI calling the tool
-            {"type": "ai", "content": "", "tool_calls": [tool_call]}
+            AIMessage(content="", tool_calls=[tool_call])
         ],
         "session_id": conv_id,
         "purchase_state": "USER_CONFIRMED",

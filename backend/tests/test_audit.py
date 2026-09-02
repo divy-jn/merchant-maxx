@@ -27,41 +27,6 @@ def test_infinite_tool_loop_termination():
         with pytest.raises(GraphRecursionError):
             maxx_app.invoke(inputs, config)
 
-def test_llm_fallback_sequence():
-    """Phase 3: Verify that fallback is request-scoped and cascades correctly without permanent demotion."""
-    from llm.factory import get_chat_model
-    from litellm.exceptions import RateLimitError
-    from httpx import Response, Request
-
-    # Create dummy request and response for the exception
-    req = Request("POST", "https://example.com")
-    resp = Response(429, request=req)
-
-    with patch("langchain_litellm.ChatLiteLLM.invoke") as mock_invoke:
-        # We need invoke to fail on first call (3.7), succeed on second (3.6)
-        mock_invoke.side_effect = [
-            RateLimitError("429 Too Many Requests", response=resp, llm_provider="gemini", model="gemini-3.7-flash"),
-            AIMessage(content="Response from 3.6"),
-            # For the second request:
-            RateLimitError("429 Too Many Requests", response=resp, llm_provider="gemini", model="gemini-3.7-flash"),
-            AIMessage(content="Response from 3.6 (second)")
-        ]
-        
-        model = get_chat_model()
-        
-        # Act
-        res = model.invoke([HumanMessage(content="Hello")])
-        
-        # Assert the model succeeded by falling back
-        assert mock_invoke.call_count == 2
-        assert res.content == "Response from 3.6"
-        
-        # Verify request-scoped (second request starts from primary again)
-        res2 = model.invoke([HumanMessage(content="Hello again")])
-        
-        assert mock_invoke.call_count == 4  # It tried primary again, failed, then fallback
-        assert res2.content == "Response from 3.6 (second)"
-
 def test_merger_contradictory_results():
     """Phase 10: Verify Merger handles contradictory states safely."""
     from agents.merger import merger_node

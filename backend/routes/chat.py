@@ -152,14 +152,20 @@ def chat_with_maxx(req: ChatRequest, current_user: dict = Depends(get_current_us
             user_confirmed = bool(intent.get("user_confirmed"))
             context = {"purchase_intent_id": intent["purchase_intent_id"], "basket_items": intent.get("basket") or [], "amount_paise": int(intent.get("amount_paise") or 0), "intent_description": "Persisted purchase intent"}
         
-        telemetry = AgentTelemetryHandler(conv_id)
-        final_state = maxx_app.invoke({"messages": [HumanMessage(content=req.message)], "session_id": conv_id,
-                                       "customer_id": (intent or {}).get("customer_id") or user_id or "",
-                                       "purchase_state": purchase_state, "purchase_context": context, "user_confirmed": user_confirmed},
-                                      config={"configurable": {"thread_id": conv_id}, "recursion_limit": 15, "callbacks": [telemetry]})
-        response = final_state["messages"][-1].content if final_state.get("messages") else "How can I help?"
-        if isinstance(response, list):
-            response = "".join(b.get("text", "") for b in response if isinstance(b, dict) and b.get("type") == "text") or str(response)
+        import logging
+        logger = logging.getLogger(__name__)
+        try:
+            telemetry = AgentTelemetryHandler(conv_id)
+            final_state = maxx_app.invoke({"messages": [HumanMessage(content=req.message)], "session_id": conv_id,
+                                           "customer_id": (intent or {}).get("customer_id") or user_id or "",
+                                           "purchase_state": purchase_state, "purchase_context": context, "user_confirmed": user_confirmed},
+                                          config={"configurable": {"thread_id": conv_id}, "recursion_limit": 15, "callbacks": [telemetry]})
+            response = final_state["messages"][-1].content if final_state.get("messages") else "How can I help?"
+            if isinstance(response, list):
+                response = "".join(b.get("text", "") for b in response if isinstance(b, dict) and b.get("type") == "text") or str(response)
+        except Exception as e:
+            logger.error(f"LLM Provider Error: {type(e).__name__} - {e}")
+            response = "I am currently experiencing technical difficulties. Please try again later."
         
         now_str = datetime.now(timezone.utc).isoformat()
         # Mark any GENERATED recommendations as SHOWN since they are now being delivered to the user

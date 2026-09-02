@@ -1,7 +1,6 @@
 fastapi
 uvicorn
 razorpay
-litellm
 langgraph
 supabase
 pydantic-settings
@@ -15,4 +14,4 @@ pinecone
 langsmith
 pytest
 langchain-community
-langchain-litellm
+langchain-openai

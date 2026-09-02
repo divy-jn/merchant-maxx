@@ -91,7 +91,6 @@ def route_after_tools(state: AgentState):
     messages = state.get("messages", [])
     if messages and getattr(messages[-1], "type", "") == "tool" and "FATAL_ERROR" in str(messages[-1].content):
         return END
-    return route_next_node(state)
 
     last_ai = next((m for m in reversed(messages) if isinstance(m, AIMessage) and getattr(m, "tool_calls", None)), None)
     if not last_ai:
