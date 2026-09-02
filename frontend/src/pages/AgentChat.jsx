@@ -86,6 +86,8 @@ export default function AgentChat({ sessionId = 'guest' }) {
   };
 
   const openCheckout = useCallback((orderId, amountStr) => {
+    console.log('[Checkout Diagnostics] Public Key present:', !!RAZORPAY_KEY_ID, '| Script loaded:', !!window.Razorpay, '| Order ID:', orderId, '| Amount:', amountStr);
+    
     if (paymentInProgress) return;
     if (!RAZORPAY_KEY_ID) { setMessages(prev => [...prev, { sender: 'bot', text: 'Payment configuration is missing. Please contact support.' }]); return; }
     if (!window.Razorpay) { setMessages(prev => [...prev, { sender: 'bot', text: 'Payment service is loading. Please try again in a moment.' }]); return; }
