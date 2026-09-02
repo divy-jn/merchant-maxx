@@ -69,7 +69,11 @@ def scout_node(state: dict):
     else:
         messages[0] = SystemMessage(content=sys_msg)
         
-    response = get_llm().bind_tools(SCOUT_TOOLS).invoke(messages)
+    from langchain_core.messages import merge_message_runs
+    messages_to_invoke = merge_message_runs(messages)
+    response = get_llm().bind_tools(SCOUT_TOOLS).invoke(messages_to_invoke)
+    if isinstance(getattr(response, "content", None), list):
+        response.content = "".join(str(b.get("text", "")) for b in response.content if isinstance(b, dict))
     state_update["messages"] = [response]
 
     existing_ctx = state.get("purchase_context") or {}

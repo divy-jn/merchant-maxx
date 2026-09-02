@@ -15,5 +15,9 @@ def get_llm():
 
 def campaigner_node(state: dict):
     messages = list(state.get("messages", []))
-    response = get_llm().bind_tools(CAMPAIGNER_TOOLS).invoke([SystemMessage(content=campaigner_prompt)] + messages)
+    from langchain_core.messages import merge_message_runs
+    messages_to_invoke = merge_message_runs([SystemMessage(content=campaigner_prompt)] + messages)
+    response = get_llm().bind_tools(CAMPAIGNER_TOOLS).invoke(messages_to_invoke)
+    if isinstance(getattr(response, "content", None), list):
+        response.content = "".join(str(b.get("text", "")) for b in response.content if isinstance(b, dict))
     return {"messages": [response]}

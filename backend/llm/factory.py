@@ -25,6 +25,44 @@ FALLBACK_EXCEPTIONS = (
     httpx.HTTPError,  # Catches underlying transport/timeout errors
 )
 
+class NormalizedChatLiteLLM(ChatLiteLLM):
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        try:
+            return super()._generate(messages, stop, run_manager, **kwargs)
+        except litellm_exceptions.BadRequestError as e:
+            msg = getattr(e, "message", "") or str(e)
+            
+            # Genuine 400 errors like malformed requests should bubble up
+            if "Requests ending with a model turn" in msg or "INVALID_ARGUMENT" in msg:
+                raise e
+                
+            # If it's not a known genuine 400, or it explicitly mentions quota/rate limits, 
+            # we normalize it to a RateLimitError to trigger our fallback.
+            if "quota" in msg.lower() or "429" in msg or "too many requests" in msg.lower():
+                raise litellm_exceptions.RateLimitError(
+                    message=msg,
+                    llm_provider=getattr(e, "llm_provider", "gemini"),
+                    model=getattr(e, "model", self.model)
+                ) from e
+                
+            # For any other unknown 400s, raise as is (fail the transaction)
+            raise e
+            
+    async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
+        try:
+            return await super()._agenerate(messages, stop, run_manager, **kwargs)
+        except litellm_exceptions.BadRequestError as e:
+            msg = getattr(e, "message", "") or str(e)
+            if "Requests ending with a model turn" in msg or "INVALID_ARGUMENT" in msg:
+                raise e
+            if "quota" in msg.lower() or "429" in msg or "too many requests" in msg.lower():
+                raise litellm_exceptions.RateLimitError(
+                    message=msg,
+                    llm_provider=getattr(e, "llm_provider", "gemini"),
+                    model=getattr(e, "model", self.model)
+                ) from e
+            raise e
+
 def _instantiate_model(cfg: ModelConfig) -> ChatLiteLLM:
     """Helper to instantiate a ChatLiteLLM based on ModelConfig and environment."""
     api_key = None
@@ -38,14 +76,16 @@ def _instantiate_model(cfg: ModelConfig) -> ChatLiteLLM:
     kwargs = {
         "model": cfg.litellm_model_name,
         "temperature": 0.0,
-        "max_retries": 0,  # CRITICAL: Do not retry the SAME model. Fallback immediately.
+        "max_retries": 0,  # For langchain tenacity
+        "num_retries": 0,  # For litellm native retries
+        "timeout": 30, # Fail fast so fallback happens before Cloud Run 504
     }
     if api_key:
         kwargs["api_key"] = api_key
     if api_base:
         kwargs["api_base"] = api_base
 
-    return ChatLiteLLM(**kwargs)
+    return NormalizedChatLiteLLM(**kwargs)
 
 def get_chat_model(required_capabilities: List[Capability] = None) -> BaseChatModel:
     """

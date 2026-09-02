@@ -41,7 +41,11 @@ def booster_node(state: dict):
         except Exception:
             pass
     try:
-        response = get_llm().bind_tools(BOOSTER_TOOLS).invoke(prompts + messages)
+        from langchain_core.messages import merge_message_runs
+        messages_to_invoke = merge_message_runs(prompts + messages)
+        response = get_llm().bind_tools(BOOSTER_TOOLS).invoke(messages_to_invoke)
+        if isinstance(getattr(response, "content", None), list):
+            response.content = "".join(str(b.get("text", "")) for b in response.content if isinstance(b, dict))
         state_update = {"messages": [response], "booster_start": booster_start, "booster_result": {"status": "success"}}
         
         if not getattr(response, "tool_calls", None) and state.get("purchase_state") == "PRODUCT_SELECTED":

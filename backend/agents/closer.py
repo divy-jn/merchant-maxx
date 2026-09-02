@@ -74,5 +74,23 @@ def closer_node(state: dict):
         f"purchase_intent_id={(state.get('purchase_context') or {}).get('purchase_intent_id', '')}."
     ))
     llm = get_llm().bind_tools(PAYMENT_TOOLS)
-    response = llm.invoke([messages[0], state_view] + messages[1:])
+    from langchain_core.messages import merge_message_runs, HumanMessage
+    messages_to_invoke = merge_message_runs([messages[0], state_view] + messages[1:])
+    
+    # Gemini throws 400 Bad Request "Requests ending with a model turn are not supported" 
+    # if the history ends with an AIMessage.
+    # Since scout/booster outputs are AIMessages, closer will frequently encounter this.
+    
+    # Pre-process messages to flatten any complex list content in AIMessages into strings
+    # This prevents LiteLLM from crashing during _transform_messages
+    for m in messages_to_invoke:
+        if isinstance(m, AIMessage) and isinstance(m.content, list):
+            m.content = "".join(str(b.get("text", "")) for b in m.content if isinstance(b, dict))
+
+    if messages_to_invoke and getattr(messages_to_invoke[-1], "type", "") == "ai":
+        messages_to_invoke.append(HumanMessage(content="Please provide the final response to the user based on the above internal thoughts."))
+        
+    response = llm.invoke(messages_to_invoke)
+    if isinstance(getattr(response, "content", None), list):
+        response.content = "".join(str(b.get("text", "")) for b in response.content if isinstance(b, dict))
     return {"messages": [response]}

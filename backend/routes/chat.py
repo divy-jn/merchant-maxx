@@ -154,7 +154,7 @@ def chat_with_maxx(req: ChatRequest, current_user: dict = Depends(get_current_us
         
         telemetry = AgentTelemetryHandler(conv_id)
         final_state = maxx_app.invoke({"messages": [HumanMessage(content=req.message)], "session_id": conv_id,
-                                       "customer_id": (intent or {}).get("customer_id") or (current_user or {}).get("customer_id", ""),
+                                       "customer_id": (intent or {}).get("customer_id") or user_id or "",
                                        "purchase_state": purchase_state, "purchase_context": context, "user_confirmed": user_confirmed},
                                       config={"configurable": {"thread_id": conv_id}, "recursion_limit": 15, "callbacks": [telemetry]})
         response = final_state["messages"][-1].content if final_state.get("messages") else "How can I help?"

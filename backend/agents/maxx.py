@@ -73,10 +73,14 @@ def route_after_merger(state: AgentState):
     """Specific routing after Merger has synced parallel results."""
     p_state = state.get("purchase_state", "IDLE")
     
-    # If Booster or Scout had tool calls, route to tools
-    last = state.get("messages", [])[-1] if state.get("messages") else None
-    if last is not None and getattr(last, "tool_calls", None):
-        return "tools"
+    # If Booster or Scout had tool calls, route to tools.
+    # Since they run in parallel, we must check recent AIMessages that haven't been resolved by ToolMessages.
+    messages = state.get("messages", [])
+    for m in reversed(messages):
+        if getattr(m, "type", "") == "tool":
+            break
+        if getattr(m, "type", "") == "ai" and getattr(m, "tool_calls", None):
+            return "tools"
         
     if p_state in {"PURCHASE_PENDING", "RECOMMENDATION_SHOWN", "USER_CONFIRMED", "GUARDIAN_APPROVED", "ORDER_CREATED", "PAYMENT_PENDING"}:
         return "closer"
