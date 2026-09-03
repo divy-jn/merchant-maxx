@@ -21,6 +21,7 @@ class CheckoutItem(BaseModel):
 
 class CheckoutData(BaseModel):
     type: str = "checkout"
+    purchase_intent_id: str
     order_id: str
     amount_paise: int
     currency: str = "INR"
@@ -52,7 +53,6 @@ def verify_conversation_ownership(conv_id: str, current_user: dict):
         conv_q = supabase.table("conversations").select("user_id").eq("id", conv_id).maybe_single().execute()
         conv = conv_q.data if conv_q else None
     except Exception as e:
-        # Check if it is a postgrest APIError for invalid UUID
         if hasattr(e, 'code') and getattr(e, 'code') == '22P02':
             raise HTTPException(status_code=400, detail="Invalid conversation ID format")
         if '22P02' in str(e):
@@ -96,8 +96,6 @@ def _accept_latest_recommendation(intent: dict):
     now = datetime.now(timezone.utc).isoformat()
     supabase.table("recommendation_events").update({"status": "ACCEPTED", "accepted_at": now}).eq("recommendation_id", rec["recommendation_id"]).execute()
     
-    # ── ATOMIC CONDITIONAL UPDATE ──
-    # Prevents downgrading a terminal PAYMENT_SUCCESS if a webhook resolved it concurrently.
     res = supabase.table("purchase_intents").update({
         "basket": basket, 
         "subtotal_paise": subtotal, 
@@ -112,7 +110,6 @@ def _accept_latest_recommendation(intent: dict):
     }).eq("purchase_intent_id", intent["purchase_intent_id"]).neq("purchase_state", "PAYMENT_SUCCESS").execute()
     
     if not res.data:
-        # If the update failed, it was likely locked or succeeded already. We reload to avoid returning stale state.
         fresh_intent = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent["purchase_intent_id"]).maybe_single().execute()
         if fresh_intent and fresh_intent.data:
             return fresh_intent.data
@@ -136,6 +133,7 @@ def _get_checkout_data(intent: dict) -> Optional[CheckoutData]:
             "unit_price_paise": p_data.get("price_paise", 0)
         })
     return CheckoutData(
+        purchase_intent_id=intent["purchase_intent_id"],
         order_id=intent["razorpay_order_id"],
         amount_paise=intent["amount_paise"],
         items=items
@@ -181,17 +179,21 @@ def handle_action(req: ActionRequest, current_user: dict = Depends(get_current_u
             if current_state == "RECOMMENDATION_SHOWN":
                 intent = _accept_latest_recommendation(intent)
             else:
-                supabase.table("purchase_intents").update({
+                res = supabase.table("purchase_intents").update({
                     "user_confirmed": True,
                     "purchase_state": "USER_CONFIRMED",
                     "confirmed_basket": intent.get("basket"),
                     "confirmed_amount_paise": intent.get("amount_paise"),
                     "confirmation_timestamp": now,
                     "updated_at": now
-                }).eq("purchase_intent_id", intent["purchase_intent_id"]).execute()
-                intent["purchase_state"] = "USER_CONFIRMED"
+                }).eq("purchase_intent_id", intent["purchase_intent_id"]).in_("purchase_state", ["PURCHASE_PENDING", "RECOMMENDATION_SHOWN"]).execute()
+                if not res.data:
+                    fresh = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent["purchase_intent_id"]).maybe_single().execute()
+                    if fresh and fresh.data:
+                        intent = fresh.data
+                else:
+                    intent["purchase_state"] = "USER_CONFIRMED"
             
-            # Invoke create_razorpay_order directly
             from agents.tools import create_razorpay_order
             injected_state = {"purchase_context": {"purchase_intent_id": intent["purchase_intent_id"]}, "session_id": req.conversation_id}
             rzp_response = create_razorpay_order(injected_state)
@@ -260,7 +262,6 @@ def chat_with_maxx(req: ChatRequest, current_user: dict = Depends(get_current_us
                 if res.data:
                     intent = dict(intent, user_confirmed=True, purchase_state="USER_CONFIRMED", confirmed_basket=intent.get("basket"), confirmed_amount_paise=intent.get("amount_paise"))
                 else:
-                    # Update failed due to atomic guard, reload intent
                     fresh = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent["purchase_intent_id"]).maybe_single().execute()
                     if fresh and fresh.data:
                         intent = fresh.data
@@ -287,12 +288,10 @@ def chat_with_maxx(req: ChatRequest, current_user: dict = Depends(get_current_us
             response = "I am currently experiencing technical difficulties. Please try again later."
         
         now_str = datetime.now(timezone.utc).isoformat()
-        # Mark any GENERATED recommendations as SHOWN since they are now being delivered to the user
         supabase.table("recommendation_events").update({"status": "SHOWN", "shown_at": now_str}).eq("session_id", conv_id).eq("status", "GENERATED").execute()
         
         supabase.table("messages").insert({"conversation_id": conv_id, "role": "assistant", "content": str(response)}).execute()
         
-        # Determine structured checkout data by inspecting fresh state
         checkout_data = None
         actions = []
         final_purchase_state = purchase_state
@@ -327,12 +326,11 @@ def get_chat_history(conversation_id: str = None, current_user: dict = Depends(g
     intent = _load_active_intent(conversation_id)
     checkout_data = _get_checkout_data(intent)
     if checkout_data:
-        # Avoid duplicate checkouts: only append if payment is actually pending and not succeeded
         if intent.get("purchase_state") in {"PAYMENT_PENDING", "PAYMENT_FAILED", "ORDER_CREATED"}:
             messages.append({
                 "sender": "bot",
                 "text": "Your order is ready for payment.",
-                "checkout_data": checkout_data.dict()
+                "checkout_data": checkout_data.model_dump()
             })
     return messages
 
