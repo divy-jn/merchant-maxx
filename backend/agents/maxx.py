@@ -41,11 +41,12 @@ _INTERNAL_ID_PATTERNS = (
     re.compile(r"\b(?:ID|Product ID|item_id|product_id|Rec ID|Recommendation ID)\s*[:=]\s*(?:item_|rec_)[A-Za-z0-9_-]+\b", re.IGNORECASE),
     re.compile(r"\bitem_[A-Za-z0-9_-]+\b", re.IGNORECASE),
     re.compile(r"\brec_[A-Za-z0-9_-]+\b", re.IGNORECASE),
+    re.compile(r"\b(?:pi|ord|oi)_[A-Za-z0-9_-]+\b", re.IGNORECASE),
 )
 
 
 def sanitize_customer_text(text: str) -> str:
-    """Remove internal catalog/recommendation identifiers from customer-visible text."""
+    """Remove internal catalog, recommendation, purchase-intent, and local-order identifiers from customer-visible text."""
     sanitized = str(text or "")
     for pattern in _INTERNAL_ID_PATTERNS:
         sanitized = pattern.sub(" ", sanitized)
