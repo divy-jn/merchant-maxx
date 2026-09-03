@@ -66,11 +66,10 @@ export default function AgentChat({ sessionId = 'guest' }) {
         if (!res.ok) throw new Error('Could not load conversation');
         const data = await res.json();
         const loadedMessages = [{ sender: 'bot', text: WELCOME }, ...(Array.isArray(data) ? data : [])];
-        // Ensure only the last checkout card is active in history
         let lastCheckoutIdx = -1;
         loadedMessages.forEach((m, i) => { if (m.checkout_data) lastCheckoutIdx = i; });
         if (lastCheckoutIdx !== -1) {
-           loadedMessages.forEach((m, i) => { if (m.checkout_data && i !== lastCheckoutIdx) m.checkout_data._stale = true; });
+          loadedMessages.forEach((m, i) => { if (m.checkout_data && i !== lastCheckoutIdx) m.checkout_data = { ...m.checkout_data, _stale: true }; });
         }
         setMessages(loadedMessages);
       } catch {
@@ -111,13 +110,13 @@ export default function AgentChat({ sessionId = 'guest' }) {
       setMessages(prev => {
         const updated = [...prev];
         if (data.checkout_data || data.purchase_state === 'PAYMENT_SUCCESS') {
-           updated.forEach(m => { if (m.checkout_data) m.checkout_data = { ...m.checkout_data, _stale: true }; });
+          updated.forEach(m => { if (m.checkout_data) m.checkout_data = { ...m.checkout_data, _stale: true }; });
         }
         if (data.actions) {
-           updated.forEach(m => { if (m.actions) m.actions = m.actions.map(a => ({ ...a, _stale: true })); });
+          updated.forEach(m => { if (m.actions) m.actions = m.actions.map(a => ({ ...a, _stale: true })); });
         }
         if (newMsg.text || newMsg.checkout_data || (newMsg.actions && newMsg.actions.length > 0)) {
-           return [...updated, newMsg];
+          return [...updated, newMsg];
         }
         return updated;
       });
@@ -129,42 +128,75 @@ export default function AgentChat({ sessionId = 'guest' }) {
     }
   };
 
-  const openCheckout = useCallback((orderId, amountStr) => {
+  const openCheckout = useCallback((orderId, amountStr, purchaseIntentId) => {
     console.log('[Checkout Diagnostics] Public Key present:', !!RAZORPAY_KEY_ID, '| Script loaded:', !!window.Razorpay, '| Order ID:', orderId, '| Amount:', amountStr);
     
     if (paymentInProgress) return;
+    if (!purchaseIntentId) {
+      setMessages(prev => [...prev, { sender: 'bot', text: 'This checkout session is missing its purchase reference. Please refresh and try again.' }]);
+      return;
+    }
     if (!RAZORPAY_KEY_ID) { setMessages(prev => [...prev, { sender: 'bot', text: 'Payment configuration is missing. Please contact support.' }]); return; }
     if (!window.Razorpay) { setMessages(prev => [...prev, { sender: 'bot', text: 'Payment service is loading. Please try again in a moment.' }]); return; }
     setPaymentInProgress(true);
     const options = {
-      key: RAZORPAY_KEY_ID, order_id: orderId, name: 'Merchant Maxx', description: 'Purchase via MAXX AI Assistant', theme: { color: '#635BFF' },
+      key: RAZORPAY_KEY_ID,
+      order_id: orderId,
+      name: 'Merchant Maxx',
+      description: 'Purchase via MAXX AI Assistant',
+      theme: { color: '#635BFF' },
       handler: async function () {
         setMessages(prev => [...prev, { sender: 'bot', text: '⏳ Verifying payment...' }]);
         try {
-          const res = await fetch(`${API_BASE_URL}/chat/action`, { 
-            method: 'POST', 
-            headers: { ...authHeaders(), 'Content-Type': 'application/json' }, 
-            body: JSON.stringify({ action: 'VERIFY_PAYMENT', payload: response, conversation_id: currentConvId }) 
+          const res = await fetch(`${API_BASE_URL}/chat/action`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'VERIFY_PAYMENT',
+              payload: { purchase_intent_id: purchaseIntentId },
+              conversation_id: currentConvId
+            })
           });
           const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || 'Payment verification failed');
+          const paymentSucceeded = data.purchase_state === 'PAYMENT_SUCCESS';
           setMessages(prev => {
-            const updated = prev.filter(m => m.text !== '⏳ Verifying payment...').map(m => {
-               if (m.checkout_data) return { ...m, checkout_data: { ...m.checkout_data, _stale: true } };
-               return m;
-            });
-            return [...updated, { sender: 'bot', text: data.response || 'Payment received! Thank you for your purchase.' }];
+            const updated = prev.filter(m => m.text !== '⏳ Verifying payment...');
+            if (paymentSucceeded) {
+              updated.forEach(m => {
+                if (m.checkout_data) m.checkout_data = { ...m.checkout_data, _stale: true };
+                if (m.actions) m.actions = m.actions.map(a => ({ ...a, _stale: true }));
+              });
+            }
+            return [...updated, { sender: 'bot', text: data.response || (paymentSucceeded ? 'Payment received! Thank you for your purchase.' : 'Payment is still being confirmed. Please check again shortly.') }];
           });
-          loadConversations();
-        } catch { setMessages(prev => [...prev.filter(m => m.text !== '⏳ Verifying payment...'), { sender: 'bot', text: 'Payment submitted. Your order will be confirmed shortly.' }]); }
-        setPaymentInProgress(false);
+          await loadConversations();
+        } catch (err) {
+          setMessages(prev => [...prev.filter(m => m.text !== '⏳ Verifying payment...'), { sender: 'bot', text: err.message || 'We could not verify the payment yet. Please try again.' }]);
+        } finally {
+          setPaymentInProgress(false);
+        }
       },
-      modal: { ondismiss: () => { setMessages(prev => [...prev, { sender: 'bot', text: 'Payment was cancelled. You can try again by saying “pay” or “proceed”.' }]); setPaymentInProgress(false); }, escape: true, confirm_close: true }
+      modal: {
+        ondismiss: () => {
+          setMessages(prev => [...prev, { sender: 'bot', text: 'Payment was cancelled. You can try again when you\'re ready.' }]);
+          setPaymentInProgress(false);
+        },
+        escape: true,
+        confirm_close: true
+      }
     };
     try {
       const rzp = new window.Razorpay(options);
-      rzp.on('payment.failed', response => { setMessages(prev => [...prev, { sender: 'bot', text: `Payment failed: ${response.error?.description || 'Please try again'}.` }]); setPaymentInProgress(false); });
+      rzp.on('payment.failed', paymentFailure => {
+        setMessages(prev => [...prev, { sender: 'bot', text: `Payment failed: ${paymentFailure.error?.description || 'Please try again'}.` }]);
+        setPaymentInProgress(false);
+      });
       rzp.open();
-    } catch { setMessages(prev => [...prev, { sender: 'bot', text: 'Unable to open payment window. Please try again.' }]); setPaymentInProgress(false); }
+    } catch {
+      setMessages(prev => [...prev, { sender: 'bot', text: 'Unable to open payment window. Please try again.' }]);
+      setPaymentInProgress(false);
+    }
   }, [paymentInProgress, authHeaders, currentConvId, loadConversations]);
 
   const handleSubmit = async (e) => {
@@ -183,10 +215,10 @@ export default function AgentChat({ sessionId = 'guest' }) {
       setMessages(prev => {
         const updated = [...prev];
         if (data.checkout_data || data.purchase_state === 'PAYMENT_SUCCESS') {
-           updated.forEach(m => { if (m.checkout_data) m.checkout_data = { ...m.checkout_data, _stale: true }; });
+          updated.forEach(m => { if (m.checkout_data) m.checkout_data = { ...m.checkout_data, _stale: true }; });
         }
         if (data.actions) {
-           updated.forEach(m => { if (m.actions) m.actions = m.actions.map(a => ({ ...a, _stale: true })); });
+          updated.forEach(m => { if (m.actions) m.actions = m.actions.map(a => ({ ...a, _stale: true })); });
         }
         return [...updated, newMsg];
       });
@@ -233,7 +265,7 @@ export default function AgentChat({ sessionId = 'guest' }) {
             <div className="checkout-secure-badge">
               <ShieldCheck size={14} /> Secure payment via Razorpay
             </div>
-            <button className="btn btn-primary pay-now-btn" onClick={() => openCheckout(d.order_id, d.amount_paise / 100)} disabled={paymentInProgress}>
+            <button className="btn btn-primary pay-now-btn" onClick={() => openCheckout(d.order_id, d.amount_paise / 100, d.purchase_intent_id)} disabled={paymentInProgress}>
               <CreditCard size={18} />
               {paymentInProgress ? 'Processing…' : `Pay ${formattedAmount}`}
             </button>
