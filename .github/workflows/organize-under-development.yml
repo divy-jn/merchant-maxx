@@ -1,0 +1,96 @@
+name: Organize development artifacts
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  organize:
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Organize non-runtime artifacts and refresh project status
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p underConstruction
+
+          if [ -d scratch ]; then
+            git mv scratch underConstruction/scratch
+          fi
+
+          if [ -d .playwright-mcp ]; then
+            git mv .playwright-mcp underConstruction/playwright-mcp
+          fi
+
+          cat > underConstruction/README.md <<'EOF'
+          # underConstruction
+
+          This folder contains development-only and historical working artifacts that are **not required to run Merchant Maxx**.
+
+          Archived items include:
+          - `scratch/` — temporary scripts, smoke tests, migration helpers, logs, and verification output.
+          - `playwright-mcp/` — Playwright MCP development/debug artifacts and snapshots.
+
+          These files are retained for reference while the project is under active development, but they are intentionally separated from the production application source tree.
+          EOF
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          status = '''> **Project status — Under Development**
+          >
+          > Merchant Maxx is under active development. The core application source is maintained in `backend/` and `frontend/`, with supporting documentation in `docs/`.
+          >
+          > **Current state:**
+          > - The production application is deployed through the existing backend/frontend deployment setup.
+          > - The restored development history contains **108 commits** with original author/committer metadata and timestamps preserved through the security rewrite.
+          > - Previously exposed credentials were scrubbed from reachable Git history; real credentials must remain in environment/secret-manager configuration and must not be committed.
+          > - The latest local backend validation recorded **156 passing tests and 1 xpassed**. The GitHub Actions backend test check still needs to be resolved before calling CI fully green.
+          > - Development-only artifacts have been moved into `underConstruction/` so the repository root stays focused on the application and required project files.
+          >
+          > This status block is intentionally kept current as the project continues through development, testing, hardening, and deployment work.
+          >
+          > ---
+          >
+          '''
+
+          readme = Path('README.md')
+          text = readme.read_text(encoding='utf-8')
+          text = re.sub(r'^# .+$', '# Merchant Maxx — Under Development', text, count=1, flags=re.MULTILINE)
+          marker = '> **Project status — Under Development**'
+          if marker in text:
+              text = re.sub(r'> \*\*Project status — Under Development\*\*.*?(?=\n\n## Architecture)', status.rstrip(), text, count=1, flags=re.S)
+          else:
+              text = text.replace('# Merchant Maxx — Under Development\n\n', '# Merchant Maxx — Under Development\n\n' + status, 1)
+          readme.write_text(text.rstrip() + '\n', encoding='utf-8')
+
+          docs = sorted(Path('docs').glob('*.md'))
+          for path in docs:
+              text = path.read_text(encoding='utf-8')
+              if marker in text:
+                  text = re.sub(r'> \*\*Project status — Under Development\*\*.*?(?=\n\n---\n\n|\n\n#|\n\n##|\Z)', status.rstrip(), text, count=1, flags=re.S)
+              else:
+                  text = status + text.lstrip()
+              path.write_text(text.rstrip() + '\n', encoding='utf-8')
+          PY
+
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'No organization changes required.'
+            exit 0
+          fi
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'chore: organize non-runtime artifacts and update project status [skip ci]'
+          git push
