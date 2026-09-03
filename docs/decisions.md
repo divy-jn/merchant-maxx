@@ -1,3 +1,18 @@
+> **Project status — Under Development**
+>
+> Merchant Maxx is under active development. The core application source is maintained in `backend/` and `frontend/`, with supporting documentation in `docs/`.
+>
+> **Current state:**
+> - The production application is deployed through the existing backend/frontend deployment setup.
+> - The restored development history contains **108 commits** with original author/committer metadata and timestamps preserved through the security rewrite.
+> - Previously exposed credentials were scrubbed from reachable Git history; real credentials must remain in environment/secret-manager configuration and must not be committed.
+> - The latest local backend validation recorded **156 passing tests and 1 xpassed**. The GitHub Actions backend test check still needs to be resolved before calling CI fully green.
+> - Development-only artifacts have been moved into `underConstruction/` so the repository root stays focused on the application and required project files.
+>
+> This status block is intentionally kept current as the project continues through development, testing, hardening, and deployment work.
+>
+> ---
+>
 # 📋 Architecture & Design Decisions — Merchant Maxx
 
 > Every major design decision with context, options considered, and rationale.
@@ -210,4 +225,3 @@
 ---
 
 *Last updated: 2026-08-27*
-
