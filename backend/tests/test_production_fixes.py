@@ -165,8 +165,9 @@ def test_create_razorpay_order_fatal_error_stops_graph(mock_table, mock_get_llm,
     # The graph should stop and not loop infinitely, ending with the FATAL_ERROR message
     final_state = maxx_app.invoke(state, config={"recursion_limit": 15, "configurable": {"thread_id": conv_id}})
     
-    assert final_state["messages"][-1].type == "tool"
-    assert "FATAL_ERROR" in final_state["messages"][-1].content
+    assert final_state["messages"][-1].type == "ai"
+    assert "FATAL_ERROR" not in final_state["messages"][-1].content
+    assert "Order creation failed" in final_state["messages"][-1].content
 
 @patch("routes.chat.get_current_user")
 def test_history_restores_checkout_data(mock_user, mock_intent):

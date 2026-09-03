@@ -149,7 +149,10 @@ def customer_safe_node(state: AgentState):
         return {"messages": [AIMessage(content=cleaned or "How can I help?")]}
 
     if getattr(last, "type", "") == "tool":
-        cleaned = sanitize_customer_text(getattr(last, "content", ""))
+        content = getattr(last, "content", "")
+        if "FATAL_ERROR" in content:
+            content = content.replace("FATAL_ERROR:", "").replace("FATAL_ERROR", "").strip()
+        cleaned = sanitize_customer_text(content)
         return {"messages": [AIMessage(content=cleaned or "Your request has been processed.")]}
 
     return {"messages": [AIMessage(content="How can I help?")]}

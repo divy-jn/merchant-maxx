@@ -32,7 +32,7 @@ def test_route_after_merger_no_phantom_execution():
         "purchase_state": "PRODUCT_SELECTED"
     }
     # No tool calls at all
-    assert route_after_merger(state) == "__end__"
+    assert route_after_merger(state) == "customer_safe"
 
 def test_route_after_merger_multiple_tool_calls():
     scout_msg1 = AIMessage(content="", tool_calls=[{"name": "search_catalog", "args": {}, "id": "tc1"}])
