@@ -1,4 +1,5 @@
 import logging
+import re
 from langchain_core.messages import SystemMessage, ToolMessage
 from llm.factory import get_chat_model
 from llm.registry import Capability
@@ -49,7 +50,6 @@ def get_llm():
 def _extract_product_ids_from_history(messages: list) -> set:
     """Scan ToolMessage results for product IDs that were actually shown to the user.
     Returns the set of product IDs found in search_catalog / get_product_details results."""
-    import re
     ids = set()
     id_pattern = re.compile(r"(?:ID:\s*|Product ID:\s*)(item_\w+)", re.IGNORECASE)
     for msg in messages:
@@ -57,6 +57,15 @@ def _extract_product_ids_from_history(messages: list) -> set:
             content = str(getattr(msg, "content", ""))
             ids.update(id_pattern.findall(content))
     return ids
+
+
+def _sanitize_customer_response(text: str) -> str:
+    """Remove implementation-only identifiers from text before it reaches the customer."""
+    text = re.sub(r"\s*\(?(?:ID|Product ID|Rec ID)\s*:\s*item_[A-Za-z0-9_-]+\)?", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bitem_[A-Za-z0-9_-]+\b", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\brec_[A-Za-z0-9_-]+\b", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s{2,}", " ", text)
+    return text.strip()
 
 
 def scout_node(state: dict):
@@ -81,6 +90,8 @@ def scout_node(state: dict):
     response = get_llm().bind_tools(SCOUT_TOOLS).invoke(messages_to_invoke)
     if isinstance(getattr(response, "content", None), list):
         response.content = "".join(str(b.get("text", "")) for b in response.content if isinstance(b, dict))
+    if isinstance(getattr(response, "content", None), str):
+        response.content = _sanitize_customer_response(response.content)
     state_update["messages"] = [response]
 
     existing_ctx = state.get("purchase_context") or {}
@@ -150,7 +161,7 @@ def scout_node(state: dict):
             for item in basket_items:
                 try:
                     p_res = supabase.table("products").select("product_id,price_paise,active").eq("product_id", item["product_id"]).eq("merchant_id", "merchant_mxx_001").maybe_single().execute()
-                    p_data = getattr(p_res, "data", None) if p_res else None
+                    p_data = getattr(p_res, "data", None) if p_res is not None else None
                     if p_data and p_data.get("active"):
                         qty = int(item["quantity"])
                         total_amount += int(p_data["price_paise"]) * qty
