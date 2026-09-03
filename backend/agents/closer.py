@@ -20,7 +20,8 @@ Rules:
 - If purchase_state is PURCHASE_PENDING, ask for explicit confirmation and do not call any payment tool.
 - If purchase_state is USER_CONFIRMED AND user_confirmed=True, and the user's latest message asks to buy, order, checkout, complete, pay, proceed, or place the order, YOU MUST use the create_razorpay_order tool. Do not refuse checkout, do not say you cannot process payments, and do not redirect the user to a store page. Just run the tool.
 - After create_razorpay_order succeeds, return the returned Razorpay Order ID and amount clearly so the application can render its secure Pay button. Never claim payment succeeded at this stage.
-- If purchase_state is PAYMENT_PENDING and an existing Razorpay order is present, do not create another order. Return the existing order information and tell the user to continue payment.
+- If purchase_state is ORDER_CREATING, do not create another order. Tell the user checkout is being prepared.
+- If purchase_state is PAYMENT_PENDING or ORDER_CREATED and an existing Razorpay order is present, do not create another order. Tell the user to continue payment.
 - For FAILED/UNKNOWN, call check_payment_status when state inspection is needed. Never blindly retry.
 - Never claim the user confirmed unless user_confirmed=True is present in state.
 - Never invent a basket, amount, product, Razorpay ID, or payment result.
@@ -50,12 +51,21 @@ def closer_node(state: dict):
     messages = list(state.get("messages", []))
     latest_user = next((m for m in reversed(messages) if getattr(m, "type", None) == "human"), None)
     latest_text = str(latest_user.content) if latest_user is not None else ""
+    purchase_state = state.get("purchase_state")
+
+    # Existing/ongoing checkout is terminal for this turn. Do not invoke the
+    # payment LLM and never issue a second create-order request.
+    if purchase_state == "ORDER_CREATING":
+        return {"messages": [AIMessage(content="Your checkout is being prepared. Please continue in the payment window when it appears.")]}
+
+    if purchase_state in {"PAYMENT_PENDING", "ORDER_CREATED"}:
+        return {"messages": [AIMessage(content="Your order is ready for payment. Please continue to the payment window to complete checkout.")]}
 
     # Deterministic checkout trigger: once authoritative state says the user has
     # confirmed the basket, explicit checkout language should never be turned
     # into a generic refusal by the model.
     if (
-        state.get("purchase_state") == "USER_CONFIRMED"
+        purchase_state == "USER_CONFIRMED"
         and state.get("user_confirmed") is True
         and CHECKOUT_RE.search(latest_text)
     ):
@@ -69,28 +79,21 @@ def closer_node(state: dict):
 
     messages.insert(0, SystemMessage(content=closer_prompt))
     state_view = SystemMessage(content=(
-        f"Authoritative purchase state={state.get('purchase_state', 'IDLE')}; "
+        f"Authoritative purchase state={purchase_state or 'IDLE'}; "
         f"user_confirmed={state.get('user_confirmed', False)}; "
         f"purchase_intent_id={(state.get('purchase_context') or {}).get('purchase_intent_id', '')}."
     ))
     llm = get_llm().bind_tools(PAYMENT_TOOLS)
     from langchain_core.messages import merge_message_runs, HumanMessage
     messages_to_invoke = merge_message_runs([messages[0], state_view] + messages[1:])
-    
-    # Originally added because Gemini throws 400 Bad Request "Requests ending with a model turn are not supported" 
-    # if the history ends with an AIMessage.
-    # Since scout/booster outputs are AIMessages, closer will frequently encounter this.
-    # We keep this safeguard for when LLM_PROVIDER=gemini is active.
-    
-    # Pre-process messages to flatten any complex list content in AIMessages into strings
-    # This ensures compatibility with the Gemini API wrappers during _transform_messages
+
     for m in messages_to_invoke:
         if isinstance(m, AIMessage) and isinstance(m.content, list):
             m.content = "".join(str(b.get("text", "")) for b in m.content if isinstance(b, dict))
 
     if messages_to_invoke and getattr(messages_to_invoke[-1], "type", "") == "ai":
         messages_to_invoke.append(HumanMessage(content="Please provide the final response to the user based on the above internal thoughts."))
-        
+
     response = llm.invoke(messages_to_invoke)
     if isinstance(getattr(response, "content", None), list):
         response.content = "".join(str(b.get("text", "")) for b in response.content if isinstance(b, dict))
