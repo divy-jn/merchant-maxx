@@ -1,5 +1,6 @@
-from typing import TypedDict, Sequence, Annotated, Literal, List, Dict, Any
+from typing import TypedDict, Sequence, Annotated, List, Dict, Any
 import operator
+import re
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
@@ -34,63 +35,78 @@ class AgentState(TypedDict, total=False):
     merger_start: float
 
 
+_INTERNAL_ID_PATTERNS = (
+    re.compile(r"\s*\((?:ID|Product ID)\s*:\s*item_[A-Za-z0-9_-]+\)\s*", re.IGNORECASE),
+    re.compile(r"\s*\[(?:Rec ID|Recommendation ID)\s*:\s*rec_[A-Za-z0-9_-]+\]\s*", re.IGNORECASE),
+    re.compile(r"\b(?:ID|Product ID|item_id|product_id|Rec ID|Recommendation ID)\s*[:=]\s*(?:item_|rec_)[A-Za-z0-9_-]+\b", re.IGNORECASE),
+    re.compile(r"\bitem_[A-Za-z0-9_-]+\b", re.IGNORECASE),
+    re.compile(r"\brec_[A-Za-z0-9_-]+\b", re.IGNORECASE),
+)
+
+
+def sanitize_customer_text(text: str) -> str:
+    """Remove internal catalog/recommendation identifiers from customer-visible text."""
+    sanitized = str(text or "")
+    for pattern in _INTERNAL_ID_PATTERNS:
+        sanitized = pattern.sub(" ", sanitized)
+    # Clean whitespace introduced by removals while preserving readable paragraphs.
+    sanitized = re.sub(r"[ \t]{2,}", " ", sanitized)
+    sanitized = re.sub(r"\n[ \t]+", "\n", sanitized)
+    return sanitized.strip()
+
+
 def route_next_node(state: AgentState):
     p_state = state.get("purchase_state", "IDLE")
     last = state.get("messages", [])[-1] if state.get("messages") else None
-    
+
     if p_state in {"PAYMENT_FAILED", "PAYMENT_UNKNOWN", "RECOVERY_PENDING"}:
         return "closer"
-        
+
     if last is not None and getattr(last, "tool_calls", None):
         return "tools"
-        
+
     if p_state in {"PURCHASE_PENDING", "RECOMMENDATION_SHOWN", "USER_CONFIRMED", "GUARDIAN_APPROVED", "ORDER_CREATED", "PAYMENT_PENDING", "PAYMENT_SUCCESS"}:
         if isinstance(last, AIMessage) and not getattr(last, "tool_calls", None):
-            return END
+            return "customer_safe"
         return "closer"
-        
+
     ctx = state.get("purchase_context")
     if p_state == "PRODUCT_SELECTED" and ctx and ctx.get("basket_items"):
         return ["scout", "booster"]
-        
+
     if isinstance(last, HumanMessage):
         text = str(last.content).lower().strip()
-        
-        # Fast-path trivial greetings if we have no active purchase state
         if p_state == "IDLE" and text in {"hi", "hello", "hey", "greetings"}:
             return "scout"
-            
         if any(k in text for k in ("campaign", "marketing", "campaign performance")):
             return "campaigner"
         return "scout"
-        
-    if isinstance(last, AIMessage) and not getattr(last, "tool_calls", None):
-        return END
 
-    return END
+    if isinstance(last, AIMessage) and not getattr(last, "tool_calls", None):
+        return "customer_safe"
+
+    return "customer_safe"
+
 
 def route_after_merger(state: AgentState):
     """Specific routing after Merger has synced parallel results."""
     p_state = state.get("purchase_state", "IDLE")
-    
-    # If Booster or Scout had tool calls, route to tools.
-    # Since they run in parallel, we must check recent AIMessages that haven't been resolved by ToolMessages.
     messages = state.get("messages", [])
     for m in reversed(messages):
         if getattr(m, "type", "") == "tool":
             break
         if getattr(m, "type", "") == "ai" and getattr(m, "tool_calls", None):
             return "tools"
-        
+
     if p_state in {"PURCHASE_PENDING", "RECOMMENDATION_SHOWN", "USER_CONFIRMED", "GUARDIAN_APPROVED", "ORDER_CREATED", "PAYMENT_PENDING"}:
         return "closer"
-    return END
+    return "customer_safe"
 
 
 def route_after_tools(state: AgentState):
     messages = state.get("messages", [])
     if messages and getattr(messages[-1], "type", "") == "tool" and "FATAL_ERROR" in str(messages[-1].content):
-        return END
+        return "customer_safe"
 
     last_ai = next((m for m in reversed(messages) if isinstance(m, AIMessage) and getattr(m, "tool_calls", None)), None)
     if not last_ai:
@@ -108,6 +124,19 @@ def route_after_tools(state: AgentState):
         return "closer"
     return "closer"
 
+
+def customer_safe_node(state: AgentState):
+    """Final customer-visible boundary. Sanitize the latest AI response before END."""
+    messages = list(state.get("messages", []))
+    if not messages:
+        return {"messages": [AIMessage(content="How can I help?")]}
+
+    last = messages[-1]
+    if isinstance(last, AIMessage):
+        cleaned = sanitize_customer_text(getattr(last, "content", ""))
+        return {"messages": [AIMessage(content=cleaned or "How can I help?")]}
+    return {"messages": [AIMessage(content="How can I help?")]}
+
 workflow = StateGraph(AgentState)
 workflow.add_node("scout", scout_node)
 workflow.add_node("booster", booster_node)
@@ -115,31 +144,30 @@ workflow.add_node("merger", merger_node)
 workflow.add_node("closer", closer_node)
 workflow.add_node("campaigner", campaigner_node)
 workflow.add_node("tools", ToolNode(ALL_TOOLS))
+workflow.add_node("customer_safe", customer_safe_node)
 
 workflow.set_conditional_entry_point(route_next_node, {
     "scout": "scout", "booster": "booster", "closer": "closer",
-    "campaigner": "campaigner", "tools": "tools", END: END,
+    "campaigner": "campaigner", "tools": "tools", "customer_safe": "customer_safe", END: END,
 })
 
-# Fan-in to merger
 workflow.add_edge("scout", "merger")
 workflow.add_edge("booster", "merger")
 
-# After merger, decide next step (often closer or END)
 workflow.add_conditional_edges("merger", route_after_merger, {
-    "tools": "tools", "closer": "closer", END: END,
+    "tools": "tools", "closer": "closer", "customer_safe": "customer_safe", END: END,
 })
 
-# Closer and Campaigner behavior
 for node in ("closer", "campaigner"):
     workflow.add_conditional_edges(node, route_next_node, {
         "tools": "tools", "scout": "scout", "booster": "booster",
-        "closer": "closer", "campaigner": "campaigner", END: END,
+        "closer": "closer", "campaigner": "campaigner", "customer_safe": "customer_safe", END: END,
     })
 
 workflow.add_conditional_edges("tools", route_after_tools, {
-    "scout": "scout", "booster": "booster", "closer": "closer", "campaigner": "campaigner", END: END
+    "scout": "scout", "booster": "booster", "closer": "closer", "campaigner": "campaigner",
+    "customer_safe": "customer_safe", END: END
 })
+workflow.add_edge("customer_safe", END)
 
-# MemorySaver preserves conversational graph state within the process. Supabase purchase_intents is authoritative for money state.
 maxx_app = workflow.compile(checkpointer=MemorySaver())
