@@ -49,7 +49,6 @@ def sanitize_customer_text(text: str) -> str:
     sanitized = str(text or "")
     for pattern in _INTERNAL_ID_PATTERNS:
         sanitized = pattern.sub(" ", sanitized)
-    # Clean whitespace introduced by removals while preserving readable paragraphs.
     sanitized = re.sub(r"[ \t]{2,}", " ", sanitized)
     sanitized = re.sub(r"\n[ \t]+", "\n", sanitized)
     return sanitized.strip()
@@ -105,8 +104,20 @@ def route_after_merger(state: AgentState):
 
 def route_after_tools(state: AgentState):
     messages = state.get("messages", [])
-    if messages and getattr(messages[-1], "type", "") == "tool" and "FATAL_ERROR" in str(messages[-1].content):
+    if not messages:
         return "customer_safe"
+
+    # Payment/order tools are terminal for this turn. They already performed the
+    # authoritative side effect and return customer-safe status text. Routing
+    # them back through Closer would see the same checkout user message again and
+    # can issue the same tool call a second time.
+    last_tool = messages[-1]
+    if getattr(last_tool, "type", "") == "tool":
+        tool_name = getattr(last_tool, "name", "") or ""
+        if tool_name in {"create_razorpay_order", "check_payment_status", "reset_purchase_intent"}:
+            return "customer_safe"
+        if "FATAL_ERROR" in str(last_tool.content):
+            return "customer_safe"
 
     last_ai = next((m for m in reversed(messages) if isinstance(m, AIMessage) and getattr(m, "tool_calls", None)), None)
     if not last_ai:
@@ -121,12 +132,12 @@ def route_after_tools(state: AgentState):
     if "analyze_campaign_opportunities" in names:
         return "campaigner"
     if {"create_razorpay_order", "check_payment_status", "reset_purchase_intent"} & names:
-        return "closer"
+        return "customer_safe"
     return "closer"
 
 
 def customer_safe_node(state: AgentState):
-    """Final customer-visible boundary. Sanitize the latest AI response before END."""
+    """Final customer-visible boundary. Sanitize tool/AI response before END."""
     messages = list(state.get("messages", []))
     if not messages:
         return {"messages": [AIMessage(content="How can I help?")]}
@@ -135,7 +146,13 @@ def customer_safe_node(state: AgentState):
     if isinstance(last, AIMessage):
         cleaned = sanitize_customer_text(getattr(last, "content", ""))
         return {"messages": [AIMessage(content=cleaned or "How can I help?")]}
+
+    if getattr(last, "type", "") == "tool":
+        cleaned = sanitize_customer_text(getattr(last, "content", ""))
+        return {"messages": [AIMessage(content=cleaned or "Your request has been processed.")]}
+
     return {"messages": [AIMessage(content="How can I help?")]}
+
 
 workflow = StateGraph(AgentState)
 workflow.add_node("scout", scout_node)
