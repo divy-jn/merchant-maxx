@@ -5,7 +5,6 @@ from typing import Annotated, Optional
 from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
 from search.vector_store import search_products_vector, pinecone_index, index_product
-from cache.redis_client import cached
 from agents.guardian import validate_action, GuardianException
 from agents.payment_state import can_transition
 from utils.supabase_client import supabase
@@ -28,7 +27,6 @@ def _ensure_catalog_indexed():
 _ensure_catalog_indexed()
 
 @tool
-@cached(ttl=600)
 def search_catalog(query: str, category: str = None) -> str:
     """Search the merchant catalog for products, prices and availability."""
     results = search_products_vector(query, top_k=5, category=category)

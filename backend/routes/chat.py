@@ -26,10 +26,22 @@ class CheckoutData(BaseModel):
     currency: str = "INR"
     items: list[CheckoutItem]
 
+class ChatAction(BaseModel):
+    type: str
+    label: str
+    payload: Optional[dict] = None
+
+class ActionRequest(BaseModel):
+    conversation_id: str
+    action: str
+    payload: Optional[dict] = None
+
 class ChatResponse(BaseModel):
     response: str
     conversation_id: str
     checkout_data: Optional[CheckoutData] = None
+    actions: Optional[list[ChatAction]] = None
+    purchase_state: Optional[str] = None
 
 CONFIRM_RE = re.compile(r"^(yes|y|yeah|yep|sure|okay|ok|proceed|go ahead|do it|confirm|confirmed|place it|buy it|i want to buy it|purchase it|complete the order|pay now|checkout)\s*[.!]*$", re.I)
 
@@ -107,6 +119,113 @@ def _accept_latest_recommendation(intent: dict):
 
     return dict(intent, basket=basket, subtotal_paise=subtotal, amount_paise=subtotal, recommendation_id=rec["recommendation_id"], purchase_state="USER_CONFIRMED", user_confirmed=True, confirmed_basket=basket, confirmed_amount_paise=subtotal)
 
+def _get_checkout_data(intent: dict) -> Optional[CheckoutData]:
+    if not intent or intent.get("purchase_state") not in {"PAYMENT_PENDING", "PAYMENT_FAILED", "ORDER_CREATED"} or not intent.get("razorpay_order_id"):
+        return None
+    basket = intent.get("basket") or []
+    items = []
+    for b_item in basket:
+        pid = b_item["product_id"]
+        qty = b_item.get("quantity", 1)
+        p_res = supabase.table("products").select("name,price_paise").eq("product_id", pid).maybe_single().execute()
+        p_data = p_res.data if p_res else {}
+        items.append({
+            "product_id": pid,
+            "name": p_data.get("name", pid),
+            "quantity": qty,
+            "unit_price_paise": p_data.get("price_paise", 0)
+        })
+    return CheckoutData(
+        order_id=intent["razorpay_order_id"],
+        amount_paise=intent["amount_paise"],
+        items=items
+    )
+
+def _get_actions_for_state(purchase_state: str, intent_id: str) -> list[ChatAction]:
+    actions = []
+    if purchase_state == "PRODUCT_SELECTED":
+        actions.append(ChatAction(type="ADD_TO_CART", label="Add to Cart", payload={"purchase_intent_id": intent_id}))
+    elif purchase_state in {"PURCHASE_PENDING", "RECOMMENDATION_SHOWN"}:
+        actions.append(ChatAction(type="PROCEED_TO_CHECKOUT", label="Proceed to Checkout", payload={"purchase_intent_id": intent_id}))
+    return actions
+
+@router.post("/action", response_model=ChatResponse)
+def handle_action(req: ActionRequest, current_user: dict = Depends(get_current_user)):
+    if not supabase: raise HTTPException(status_code=503, detail="Supabase not configured")
+    verify_conversation_ownership(req.conversation_id, current_user)
+    
+    intent_id = req.payload.get("purchase_intent_id") if req.payload else None
+    if not intent_id:
+        intent = _load_active_intent(req.conversation_id)
+    else:
+        intent_res = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent_id).maybe_single().execute()
+        intent = intent_res.data if intent_res else None
+        
+    if not intent or intent.get("conversation_id") != req.conversation_id:
+        raise HTTPException(status_code=400, detail="Invalid or stale purchase intent")
+    
+    current_state = intent.get("purchase_state")
+    now = datetime.now(timezone.utc).isoformat()
+    response_text = ""
+    
+    if req.action == "ADD_TO_CART":
+        if current_state == "PRODUCT_SELECTED":
+            supabase.table("purchase_intents").update({"purchase_state": "PURCHASE_PENDING", "updated_at": now}).eq("purchase_intent_id", intent["purchase_intent_id"]).execute()
+            response_text = "Item added to cart."
+            supabase.table("messages").insert({"conversation_id": req.conversation_id, "role": "assistant", "content": response_text}).execute()
+        else:
+            response_text = "Cart is already updated."
+            
+    elif req.action == "PROCEED_TO_CHECKOUT":
+        if current_state in {"PURCHASE_PENDING", "RECOMMENDATION_SHOWN"}:
+            if current_state == "RECOMMENDATION_SHOWN":
+                intent = _accept_latest_recommendation(intent)
+            else:
+                supabase.table("purchase_intents").update({
+                    "user_confirmed": True,
+                    "purchase_state": "USER_CONFIRMED",
+                    "confirmed_basket": intent.get("basket"),
+                    "confirmed_amount_paise": intent.get("amount_paise"),
+                    "confirmation_timestamp": now,
+                    "updated_at": now
+                }).eq("purchase_intent_id", intent["purchase_intent_id"]).execute()
+                intent["purchase_state"] = "USER_CONFIRMED"
+            
+            # Invoke create_razorpay_order directly
+            from agents.tools import create_razorpay_order
+            injected_state = {"purchase_context": {"purchase_intent_id": intent["purchase_intent_id"]}, "session_id": req.conversation_id}
+            rzp_response = create_razorpay_order(injected_state)
+            response_text = str(rzp_response)
+            supabase.table("messages").insert({"conversation_id": req.conversation_id, "role": "assistant", "content": response_text}).execute()
+        else:
+            response_text = "Checkout already in progress."
+            
+    elif req.action == "VERIFY_PAYMENT":
+        if current_state in {"PAYMENT_PENDING", "PAYMENT_SUCCESS", "ORDER_CREATED"}:
+            from agents.tools import check_payment_status
+            injected_state = {"purchase_context": {"purchase_intent_id": intent["purchase_intent_id"]}, "session_id": req.conversation_id}
+            response_text = check_payment_status(injected_state)
+            supabase.table("messages").insert({"conversation_id": req.conversation_id, "role": "assistant", "content": response_text}).execute()
+        else:
+            response_text = "No pending payment found."
+            
+    else:
+        raise HTTPException(status_code=400, detail="Invalid action")
+        
+    fresh_intent_res = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent["purchase_intent_id"]).maybe_single().execute()
+    fresh_intent = fresh_intent_res.data if fresh_intent_res else None
+    
+    actions = _get_actions_for_state(fresh_intent.get("purchase_state"), fresh_intent["purchase_intent_id"]) if fresh_intent else []
+    checkout_data = _get_checkout_data(fresh_intent)
+    
+    return ChatResponse(
+        response=response_text,
+        conversation_id=req.conversation_id,
+        checkout_data=checkout_data,
+        actions=actions,
+        purchase_state=fresh_intent.get("purchase_state") if fresh_intent else None
+    )
+
 @router.post("/", response_model=ChatResponse)
 def chat_with_maxx(req: ChatRequest, current_user: dict = Depends(get_current_user)):
     if not supabase:
@@ -175,30 +294,23 @@ def chat_with_maxx(req: ChatRequest, current_user: dict = Depends(get_current_us
         
         # Determine structured checkout data by inspecting fresh state
         checkout_data = None
+        actions = []
+        final_purchase_state = purchase_state
         if intent:
             fresh_intent_res = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent["purchase_intent_id"]).maybe_single().execute()
             fresh_intent = fresh_intent_res.data if fresh_intent_res else None
-            if fresh_intent and fresh_intent.get("purchase_state") in {"PAYMENT_PENDING", "PAYMENT_FAILED", "ORDER_CREATED"} and fresh_intent.get("razorpay_order_id"):
-                basket = fresh_intent.get("basket") or []
-                items = []
-                for b_item in basket:
-                    pid = b_item["product_id"]
-                    qty = b_item.get("quantity", 1)
-                    p_res = supabase.table("products").select("name,price_paise").eq("product_id", pid).maybe_single().execute()
-                    p_data = p_res.data if p_res else {}
-                    items.append({
-                        "product_id": pid,
-                        "name": p_data.get("name", pid),
-                        "quantity": qty,
-                        "unit_price_paise": p_data.get("price_paise", 0)
-                    })
-                checkout_data = CheckoutData(
-                    order_id=fresh_intent["razorpay_order_id"],
-                    amount_paise=fresh_intent["amount_paise"],
-                    items=items
-                )
+            checkout_data = _get_checkout_data(fresh_intent)
+            actions = _get_actions_for_state(fresh_intent.get("purchase_state"), fresh_intent["purchase_intent_id"]) if fresh_intent else []
+            if fresh_intent:
+                final_purchase_state = fresh_intent.get("purchase_state")
 
-        return ChatResponse(response=str(response), conversation_id=conv_id, checkout_data=checkout_data)
+        return ChatResponse(
+            response=str(response),
+            conversation_id=conv_id,
+            checkout_data=checkout_data,
+            actions=actions,
+            purchase_state=final_purchase_state
+        )
     except HTTPException:
         raise
     except Exception as exc:
@@ -213,31 +325,15 @@ def get_chat_history(conversation_id: str = None, current_user: dict = Depends(g
     messages = [{"sender": "user" if m["role"] == "user" else "bot", "text": m["content"]} for m in res.data]
     
     intent = _load_active_intent(conversation_id)
-    if intent and intent.get("purchase_state") in {"PAYMENT_PENDING", "PAYMENT_FAILED", "ORDER_CREATED"} and intent.get("razorpay_order_id"):
-        basket = intent.get("basket") or []
-        items = []
-        for b_item in basket:
-            pid = b_item["product_id"]
-            qty = b_item.get("quantity", 1)
-            p_res = supabase.table("products").select("name,price_paise").eq("product_id", pid).maybe_single().execute()
-            p_data = p_res.data if p_res else {}
-            items.append({
-                "product_id": pid,
-                "name": p_data.get("name", pid),
-                "quantity": qty,
-                "unit_price_paise": p_data.get("price_paise", 0)
+    checkout_data = _get_checkout_data(intent)
+    if checkout_data:
+        # Avoid duplicate checkouts: only append if payment is actually pending and not succeeded
+        if intent.get("purchase_state") in {"PAYMENT_PENDING", "PAYMENT_FAILED", "ORDER_CREATED"}:
+            messages.append({
+                "sender": "bot",
+                "text": "Your order is ready for payment.",
+                "checkout_data": checkout_data.dict()
             })
-        messages.append({
-            "sender": "bot",
-            "text": "Your order is ready for payment.",
-            "checkout_data": {
-                "type": "checkout",
-                "order_id": intent["razorpay_order_id"],
-                "amount_paise": intent["amount_paise"],
-                "currency": "INR",
-                "items": items
-            }
-        })
     return messages
 
 @router.delete("/history")

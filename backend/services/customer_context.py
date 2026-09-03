@@ -1,15 +1,8 @@
 from typing import Any, Dict
 from utils.supabase_client import supabase
-from cache.redis_client import get_cache, set_cache
-
-TTL_SECONDS = 300
 
 def get_customer_context(customer_id: str) -> Dict[str, Any]:
-    """Build a compact customer history context from Supabase and cache it in Redis."""
-    key = f"customer:{customer_id}:context"
-    cached = get_cache(key)
-    if cached is not None:
-        return cached
+    """Build a compact customer history context from Supabase."""
     if not supabase or not customer_id:
         return {"customer_id": customer_id, "history_available": False}
 
@@ -36,5 +29,4 @@ def get_customer_context(customer_id: str) -> Dict[str, Any]:
         "recent_events": events_q.data or [],
         "history_available": True,
     }
-    set_cache(key, context, ex=TTL_SECONDS)
     return context

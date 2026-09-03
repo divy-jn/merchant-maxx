@@ -9,7 +9,6 @@ langchain-google-genai
 requests
 PyJWT
 bcrypt
-upstash-redis
 pinecone
 langsmith
 pytest

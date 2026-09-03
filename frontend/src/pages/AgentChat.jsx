@@ -65,7 +65,14 @@ export default function AgentChat({ sessionId = 'guest' }) {
         const res = await fetch(`${API_BASE_URL}/chat/history?conversation_id=${encodeURIComponent(currentConvId)}`, { headers: authHeaders() });
         if (!res.ok) throw new Error('Could not load conversation');
         const data = await res.json();
-        setMessages([{ sender: 'bot', text: WELCOME }, ...(Array.isArray(data) ? data : [])]);
+        const loadedMessages = [{ sender: 'bot', text: WELCOME }, ...(Array.isArray(data) ? data : [])];
+        // Ensure only the last checkout card is active in history
+        let lastCheckoutIdx = -1;
+        loadedMessages.forEach((m, i) => { if (m.checkout_data) lastCheckoutIdx = i; });
+        if (lastCheckoutIdx !== -1) {
+           loadedMessages.forEach((m, i) => { if (m.checkout_data && i !== lastCheckoutIdx) m.checkout_data._stale = true; });
+        }
+        setMessages(loadedMessages);
       } catch {
         setMessages([{ sender: 'bot', text: 'This conversation could not be loaded. Start a new chat or try again.' }]);
       }
@@ -85,6 +92,43 @@ export default function AgentChat({ sessionId = 'guest' }) {
     setMessages([{ sender: 'bot', text: WELCOME }]);
   };
 
+  const handleActionClick = async (actionType, payload) => {
+    if (loading) return;
+    setLoading(true);
+    setMessages(prev => [...prev, { sender: 'user', text: `[Action: ${actionType.replace(/_/g, ' ')}]` }]);
+    try {
+      const res = await fetch(`${API_BASE_URL}/chat/action`, {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: actionType, payload, conversation_id: currentConvId })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Action failed');
+      const newMsg = { sender: 'bot', text: data.response || '' };
+      if (data.checkout_data) newMsg.checkout_data = data.checkout_data;
+      if (data.actions) newMsg.actions = data.actions;
+      
+      setMessages(prev => {
+        const updated = [...prev];
+        if (data.checkout_data || data.purchase_state === 'PAYMENT_SUCCESS') {
+           updated.forEach(m => { if (m.checkout_data) m.checkout_data = { ...m.checkout_data, _stale: true }; });
+        }
+        if (data.actions) {
+           updated.forEach(m => { if (m.actions) m.actions = m.actions.map(a => ({ ...a, _stale: true })); });
+        }
+        if (newMsg.text || newMsg.checkout_data || (newMsg.actions && newMsg.actions.length > 0)) {
+           return [...updated, newMsg];
+        }
+        return updated;
+      });
+      await loadConversations();
+    } catch (err) {
+      setMessages(prev => [...prev, { sender: 'bot', text: err.message || 'Connection error. Please try again.' }]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const openCheckout = useCallback((orderId, amountStr) => {
     console.log('[Checkout Diagnostics] Public Key present:', !!RAZORPAY_KEY_ID, '| Script loaded:', !!window.Razorpay, '| Order ID:', orderId, '| Amount:', amountStr);
     
@@ -97,9 +141,19 @@ export default function AgentChat({ sessionId = 'guest' }) {
       handler: async function () {
         setMessages(prev => [...prev, { sender: 'bot', text: '⏳ Verifying payment...' }]);
         try {
-          const res = await fetch(`${API_BASE_URL}/chat/`, { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ message: 'Check payment status', conversation_id: currentConvId }) });
+          const res = await fetch(`${API_BASE_URL}/chat/action`, { 
+            method: 'POST', 
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' }, 
+            body: JSON.stringify({ action: 'VERIFY_PAYMENT', payload: response, conversation_id: currentConvId }) 
+          });
           const data = await res.json();
-          setMessages(prev => [...prev.filter(m => m.text !== '⏳ Verifying payment...'), { sender: 'bot', text: data.response || 'Payment received! Thank you for your purchase.' }]);
+          setMessages(prev => {
+            const updated = prev.filter(m => m.text !== '⏳ Verifying payment...').map(m => {
+               if (m.checkout_data) return { ...m, checkout_data: { ...m.checkout_data, _stale: true } };
+               return m;
+            });
+            return [...updated, { sender: 'bot', text: data.response || 'Payment received! Thank you for your purchase.' }];
+          });
           loadConversations();
         } catch { setMessages(prev => [...prev.filter(m => m.text !== '⏳ Verifying payment...'), { sender: 'bot', text: 'Payment submitted. Your order will be confirmed shortly.' }]); }
         setPaymentInProgress(false);
@@ -122,11 +176,20 @@ export default function AgentChat({ sessionId = 'guest' }) {
       if (!res.ok) throw new Error(data.detail || 'Message failed');
       if (data.conversation_id && data.conversation_id !== currentConvId) setCurrentConvId(data.conversation_id);
       
-      const newMsg = { sender: 'bot', text: data.response || 'Sorry, something went wrong.' };
-      if (data.checkout_data) {
-        newMsg.checkout_data = data.checkout_data;
-      }
-      setMessages(prev => [...prev, newMsg]);
+      const newMsg = { sender: 'bot', text: data.response || '' };
+      if (data.checkout_data) newMsg.checkout_data = data.checkout_data;
+      if (data.actions) newMsg.actions = data.actions;
+
+      setMessages(prev => {
+        const updated = [...prev];
+        if (data.checkout_data || data.purchase_state === 'PAYMENT_SUCCESS') {
+           updated.forEach(m => { if (m.checkout_data) m.checkout_data = { ...m.checkout_data, _stale: true }; });
+        }
+        if (data.actions) {
+           updated.forEach(m => { if (m.actions) m.actions = m.actions.map(a => ({ ...a, _stale: true })); });
+        }
+        return [...updated, newMsg];
+      });
       await loadConversations();
     } catch (err) { setMessages(prev => [...prev, { sender: 'bot', text: err.message || 'Connection error. Please try again.' }]); }
     finally { setLoading(false); }
@@ -143,42 +206,61 @@ export default function AgentChat({ sessionId = 'guest' }) {
   };
 
   const renderMessageText = (text, msg) => {
+    let content = [];
     if (msg?.checkout_data) {
       const d = msg.checkout_data;
-      const formattedAmount = (d.amount_paise / 100).toLocaleString('en-IN', { style: 'currency', currency: 'INR' });
-      return (
-        <div className="checkout-card animate-fade-in">
-          <div className="checkout-header">
-            <h4>ORDER READY</h4>
+      if (d._stale) {
+        content.push(<div key="checkout-stale" className="checkout-card stale" style={{opacity: 0.5}}><p><i>Checkout completed or expired.</i></p></div>);
+      } else {
+        const formattedAmount = (d.amount_paise / 100).toLocaleString('en-IN', { style: 'currency', currency: 'INR' });
+        content.push(
+          <div key="checkout" className="checkout-card animate-fade-in">
+            <div className="checkout-header">
+              <h4>ORDER READY</h4>
+            </div>
+            <div className="checkout-items">
+              {d.items && d.items.map((item, i) => (
+                <div key={i} className="checkout-item-row">
+                  <span className="item-name">{item.name}</span>
+                  <span className="item-qty">Qty {item.quantity}</span>
+                </div>
+              ))}
+            </div>
+            <div className="checkout-total">
+              <span>Total</span>
+              <strong>{formattedAmount}</strong>
+            </div>
+            <div className="checkout-secure-badge">
+              <ShieldCheck size={14} /> Secure payment via Razorpay
+            </div>
+            <button className="btn btn-primary pay-now-btn" onClick={() => openCheckout(d.order_id, d.amount_paise / 100)} disabled={paymentInProgress}>
+              <CreditCard size={18} />
+              {paymentInProgress ? 'Processing…' : `Pay ${formattedAmount}`}
+            </button>
           </div>
-          <div className="checkout-items">
-            {d.items && d.items.map((item, i) => (
-              <div key={i} className="checkout-item-row">
-                <span className="item-name">{item.name}</span>
-                <span className="item-qty">Qty {item.quantity}</span>
-              </div>
-            ))}
-          </div>
-          <div className="checkout-total">
-            <span>Total</span>
-            <strong>{formattedAmount}</strong>
-          </div>
-          <div className="checkout-secure-badge">
-            <ShieldCheck size={14} /> Secure payment via Razorpay
-          </div>
-          <button className="btn btn-primary pay-now-btn" onClick={() => openCheckout(d.order_id, d.amount_paise / 100)} disabled={paymentInProgress}>
-            <CreditCard size={18} />
-            {paymentInProgress ? 'Processing…' : `Pay ${formattedAmount}`}
-          </button>
+        );
+      }
+    }
+    
+    if (msg?.sender === 'user') {
+      content.push(<span key="text">{text}</span>);
+    } else {
+      if (text) content.push(<ReactMarkdown key="text" className="markdown-body">{text}</ReactMarkdown>);
+    }
+
+    if (msg?.actions && msg.actions.length > 0) {
+      content.push(
+        <div key="actions" className="message-actions" style={{display: 'flex', gap: '8px', marginTop: '12px', flexWrap: 'wrap'}}>
+          {msg.actions.map((action, i) => (
+             <button key={i} className="btn btn-outline action-btn" disabled={action._stale || loading} onClick={() => handleActionClick(action.type, action.payload)}>
+               {action.label}
+             </button>
+          ))}
         </div>
       );
     }
     
-    if (msg?.sender === 'user') {
-      return text;
-    }
-    
-    return <ReactMarkdown className="markdown-body">{text}</ReactMarkdown>;
+    return content;
   };
 
   const filteredConversations = conversations.filter(c => titleForConversation(c).toLowerCase().includes(search.trim().toLowerCase()));

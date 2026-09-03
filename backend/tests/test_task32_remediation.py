@@ -52,15 +52,23 @@ def test_acp_discovery_endpoints_implemented():
     
     assert response.status_code == 200, "Discovery endpoint failed"
     discovery_data = response.json()
-    # Get all registered routes
+    # Get all registered routes properly
     registered_routes = []
     for route in app.routes:
+        # FastAPI flattens included routers into APIRoute objects which have a 'path' attribute
         if hasattr(route, "path"):
             registered_routes.append(route.path)
-        elif hasattr(route, "routes"):
-            for r in route.routes:
-                registered_routes.append(getattr(route, "path", "") + getattr(r, "path", ""))
-    
+        
     for capability in discovery_data.get("capabilities", []):
         endpoint = capability.get("endpoint")
-        assert endpoint in registered_routes, f"Advertised capability endpoint {endpoint} is not implemented"
+        
+        # Since the previous route inspection was failing due to FastAPI internals, 
+        # let's just actually ping the endpoint to verify it exists!
+        if capability.get("method") == "POST":
+            # We expect 422 Unprocessable Entity if it exists but lacks payload, 
+            # or 200/400. We just want to ensure it's not 404.
+            test_res = client.post(endpoint, json={})
+            assert test_res.status_code != 404, f"Endpoint {endpoint} returned 404"
+        else:
+            test_res = client.get(endpoint)
+            assert test_res.status_code != 404, f"Endpoint {endpoint} returned 404"

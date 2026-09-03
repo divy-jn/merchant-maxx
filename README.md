@@ -6,9 +6,10 @@ Merchant Maxx is a production-grade, highly resilient AI e-commerce platform bui
 
 * **Backend**: FastAPI & Python 3.11+
 * **AI Orchestration**: LangGraph (Multi-Agent System) & LangChain
-* **LLM Gateway**: Direct Gemini Integration
-* **Database & Auth**: Supabase (PostgreSQL)
-* **Payments**: Razorpay
+* **LLM Gateway**: OpenAI OR Gemini (selectable via LLM_PROVIDER env var; one active provider at a time, no automatic fallback)
+* **Database & Auth**: Supabase (PostgreSQL) - Authoritative for all commerce state
+* **Payments**: Razorpay (backend-controlled deterministic flow)
+* **Observability**: LangSmith
 * **Hosting**: Google Cloud Run (Backend) & Vercel (Frontend)
 
 ### Multi-Agent System (LangGraph)
@@ -29,15 +30,13 @@ We implemented a multi-layered, idempotent transaction recovery system to ensure
 * **Pre-Flight Persistence**: Razorpay Order IDs are persisted to the Supabase `orders` table *before* they are returned to the frontend.
 * **Automated Webhook Recovery**: If a Razorpay payment succeeds but the local frontend fails to complete the loop, the `payment.captured` webhook will autonomously reconstruct the basket and provision the missing local order.
 
-### 2. Autonomous Multi-Model Fallback
-The AI pipeline is protected against vendor outages and rate limits:
-* **LLM Integration**: Direct Gemini integration
-* **Multi-Agent Orchestration**: LangGraph (Scout, Booster, Merger, Closer, Campaigner)
+### 2. Dual Provider Support (No Fallback)
+The AI pipeline supports selecting either OpenAI (defaulting to gpt-4o-mini) or Gemini via environment variables. There is no LiteLLM, Nemotron, or automatic model/key fallback runtime. Exactly one provider is active at any time.
+
 * **Vector Database**: Pinecone
 * **Relational Database**: Supabase (PostgreSQL with Row Level Security)
 * **Payment Gateway**: Razorpay Test Mode
 * **Testing**: Pytest + custom local memory fallback mocks
-* **Zero-Timeout Failover**: By intercepting and normalizing HTTP 429 Quota Exhaustion errors, the backend triggers fallback instantly without sleeping, preventing Cloud Run 504 timeouts.
 
 ### 3. Fortified Database Security (RLS)
 The database is locked down with strict Row Level Security (RLS) policies:
@@ -47,7 +46,7 @@ The database is locked down with strict Row Level Security (RLS) policies:
 ### 4. Deterministic AI Guardrails
 * The LLM cannot hallucinate transaction amounts, basket contents, or Razorpay IDs.
 * Basket totals are recalculated authoritative server-side by checking real-time database inventory and prices before allowing Razorpay to generate a payment link.
-* AIMessage list-content transformation bugs deep within the LangChain/LiteLLM bridge are explicitly flattened to guarantee stability.
+* Frontend deterministic action endpoints (`/chat/action`) handle commerce transitions, completely isolating payment validation from natural language generation.
 
 ## Development & Deployment
 

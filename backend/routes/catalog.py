@@ -2,7 +2,6 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 from razorpay_service import items
-from cache.redis_client import cached
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
 
@@ -22,7 +21,6 @@ class ProductResponse(BaseModel):
     active: bool
 
 @router.get("/", response_model=List[ProductResponse])
-@cached(ttl=300)
 def list_catalog():
     """Lists all products from Razorpay Items API"""
     try:
@@ -35,7 +33,6 @@ def list_catalog():
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
 @router.get("/{item_id}", response_model=ProductResponse)
-@cached(ttl=3600)
 def get_catalog_item(item_id: str):
     """Gets a specific product from Razorpay Items API"""
     try:
