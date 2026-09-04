@@ -109,7 +109,7 @@ def test_create_razorpay_order_idempotent_duplicate(mock_create_order, mock_inte
     
     # 1. First creation
     res1 = create_razorpay_order.invoke({"state": {"purchase_context": {"purchase_intent_id": iid}, "session_id": conv_id}})
-    assert "Razorpay Order created successfully" in res1
+    assert "Your order is ready" in res1
     
     # 2. Reset state back to USER_CONFIRMED to simulate concurrent/duplicate call
     supabase.table("purchase_intents").update({
@@ -118,7 +118,7 @@ def test_create_razorpay_order_idempotent_duplicate(mock_create_order, mock_inte
     
     # Second creation should trigger unique violation 23505 and recover gracefully
     res2 = create_razorpay_order.invoke({"state": {"purchase_context": {"purchase_intent_id": iid}, "session_id": conv_id}})
-    assert "Razorpay Order already exists" in res2
+    assert "Your order is already prepared" in res2
     
     # Clean up
     supabase.table("products").delete().eq("product_id", "test_prod").execute()

@@ -114,7 +114,7 @@ def test_5_legitimate_path(mock_supabase):
     with patch("agents.tools.validate_action") as mock_validate:
         with patch("razorpay_service.orders.create_order", return_value={"id": "order_rzp_123"}):
             res = create_razorpay_order.invoke({"state": state})
-            assert "Razorpay Order created successfully" in res
+            assert "Your order is ready" in res
             mock_validate.assert_called_with("Closer", "create_razorpay_order",
                         {"purchase_intent_id": "pi_test", "user_confirmed": True,
                          "purchase_state": "USER_CONFIRMED", "entity_valid": True},
@@ -127,7 +127,7 @@ def test_6_already_successful_intent(mock_supabase):
     state = {"session_id": "conv_123", "purchase_context": {"purchase_intent_id": "pi_test"}}
     
     res = create_razorpay_order.invoke({"state": state})
-    assert "already exists" in res
+    assert "already prepared" in res
 
 def test_7_failed_invalid_intent(mock_supabase):
     """Test 7: Intent is PAYMENT_FAILED"""
@@ -139,7 +139,7 @@ def test_7_failed_invalid_intent(mock_supabase):
     # Since Razorpay order ID exists, it returns idempotent response to check status,
     # or it will be blocked by explicit confirmation if we reset it.
     # In this case it has an order ID, so idempotency returns it.
-    assert "already exists" in res
+    assert "already prepared" in res
 
 def test_8_basket_changed_after_confirmation(mock_supabase):
     """Test 8: Basket changed after confirmation (same as test 3)"""

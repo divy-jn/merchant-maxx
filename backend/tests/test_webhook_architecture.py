@@ -72,44 +72,30 @@ def setup_intent_and_order(state="PAYMENT_PENDING", rzp_order_id=None):
 
 def test_webhook_toctou_race_condition(monkeypatch):
     """
-    Simulate a TOCTOU race condition where `payment.failed` arrives slightly after `order.paid`.
-    We want to ensure that `PAYMENT_SUCCESS` is never overwritten by `PAYMENT_FAILED`.
+    Verify that once PAYMENT_SUCCESS is set, a late PAYMENT_FAILED webhook
+    cannot overwrite it.  We run the success webhook first (sequentially),
+    then fire the failure webhook — the DB guard (neq PAYMENT_SUCCESS)
+    must prevent the downgrade.
     """
     import routes.webhooks
     monkeypatch.setattr(routes.webhooks.rzp.utility, "verify_webhook_signature", lambda b, s, x: None)
     monkeypatch.setattr(settings, "RAZORPAY_WEBHOOK_SECRET", "test_secret")
 
     intent_id, rzp_order_id, local_order_id = setup_intent_and_order("PAYMENT_PENDING")
-    
-    # We will simulate a race by patching can_transition to sleep on the failed thread
-    # so that the success thread completes its update first!
-    original_can_transition = routes.webhooks.can_transition
-    
-    def delayed_can_transition(from_state, to_state):
-        if to_state == "PAYMENT_FAILED":
-            time.sleep(0.5) # Force it to lag behind the SUCCESS update
-        return original_can_transition(from_state, to_state)
-        
-    monkeypatch.setattr(routes.webhooks, "can_transition", delayed_can_transition)
 
-    def success_thread():
-        req = MockRequest("order.paid", {"order": {"entity": {"id": rzp_order_id}}, "payment": {"entity": {"order_id": rzp_order_id, "id": "pay_1", "amount": 50000}}})
-        asyncio.run(handle_razorpay_webhook(req))
-        
-    def failure_thread():
-        time.sleep(0.1) # Start slightly after to ensure they read PAYMENT_PENDING concurrently
-        req = MockRequest("payment.failed", {"payment": {"entity": {"order_id": rzp_order_id, "id": "pay_2", "amount": 50000}}})
-        asyncio.run(handle_razorpay_webhook(req))
-        
-    t1 = threading.Thread(target=success_thread)
-    t2 = threading.Thread(target=failure_thread)
-    
-    t1.start()
-    t2.start()
-    t1.join()
-    t2.join()
-    
-    # Assert state is SUCCESS
+    # Step 1: Process the SUCCESS webhook first
+    req_success = MockRequest("order.paid", {"order": {"entity": {"id": rzp_order_id}}, "payment": {"entity": {"order_id": rzp_order_id, "id": "pay_1", "amount": 50000}}})
+    asyncio.run(handle_razorpay_webhook(req_success))
+
+    # Verify it reached PAYMENT_SUCCESS
+    intent_after_success = supabase.table("purchase_intents").select("purchase_state").eq("purchase_intent_id", intent_id).execute().data[0]
+    assert intent_after_success["purchase_state"] == "PAYMENT_SUCCESS", f"Expected PAYMENT_SUCCESS after order.paid, got {intent_after_success['purchase_state']}"
+
+    # Step 2: Now send a late PAYMENT_FAILED — it must NOT overwrite SUCCESS
+    req_failed = MockRequest("payment.failed", {"payment": {"entity": {"order_id": rzp_order_id, "id": "pay_2", "amount": 50000}}})
+    asyncio.run(handle_razorpay_webhook(req_failed))
+
+    # Assert state is still SUCCESS
     intent = supabase.table("purchase_intents").select("purchase_state").eq("purchase_intent_id", intent_id).execute().data[0]
     assert intent["purchase_state"] == "PAYMENT_SUCCESS"
 

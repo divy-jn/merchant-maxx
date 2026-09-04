@@ -1,6 +1,9 @@
 import importlib.util
 import sys
 import os
+
+# Ensure test environment is set before any other imports
+os.environ.setdefault("APP_ENV", "test")
 from unittest.mock import MagicMock
 
 # Mock Pinecone to prevent API key errors during import

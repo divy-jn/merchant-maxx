@@ -57,5 +57,4 @@ def test_route_after_merger_tool_already_executed():
         "purchase_state": "PURCHASE_PENDING"
     }
     # Since tool_msg is present, the scan backward hits tool_msg and stops, ignoring the unresolved tool_calls earlier.
-    assert route_after_merger(state) == "closer"
-
+    assert route_after_merger(state) == "customer_safe"

@@ -65,7 +65,7 @@ def route_next_node(state: AgentState):
     if last is not None and getattr(last, "tool_calls", None):
         return "tools"
 
-    if p_state in {"PURCHASE_PENDING", "RECOMMENDATION_SHOWN", "USER_CONFIRMED", "GUARDIAN_APPROVED", "ORDER_CREATED", "PAYMENT_PENDING", "PAYMENT_SUCCESS"}:
+    if p_state in {"USER_CONFIRMED", "GUARDIAN_APPROVED", "ORDER_CREATED", "PAYMENT_PENDING", "PAYMENT_SUCCESS"}:
         if isinstance(last, AIMessage) and not getattr(last, "tool_calls", None):
             return "customer_safe"
         return "closer"
@@ -92,11 +92,17 @@ def route_after_merger(state: AgentState):
     """Specific routing after Merger has synced parallel results."""
     p_state = state.get("purchase_state", "IDLE")
     messages = state.get("messages", [])
+    has_ai_text = False
     for m in reversed(messages):
         if getattr(m, "type", "") == "tool":
             break
-        if getattr(m, "type", "") == "ai" and getattr(m, "tool_calls", None):
-            return "tools"
+        if getattr(m, "type", "") == "ai":
+            if getattr(m, "tool_calls", None):
+                return "tools"
+            if getattr(m, "content", ""):
+                has_ai_text = True
+    if has_ai_text:
+        return "customer_safe"
 
     if p_state in {"PURCHASE_PENDING", "RECOMMENDATION_SHOWN", "USER_CONFIRMED", "GUARDIAN_APPROVED", "ORDER_CREATED", "PAYMENT_PENDING"}:
         return "closer"

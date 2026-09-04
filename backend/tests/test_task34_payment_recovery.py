@@ -111,7 +111,7 @@ def test_phase8_4_retry_after_persistence_failure(fake_db, mock_orders):
     
     state = {"purchase_context": {"purchase_intent_id": "pi_123"}, "session_id": "sess_1"}
     result = create_razorpay_order.invoke({"state": state})
-    assert "Razorpay Order already exists" in result
+    assert "Your order is already prepared" in result
 
 def test_phase5_webhook_and_reconciliation_equivalence(fake_db):
     fake_db.data_store["entity_mapping"] = [{"synthetic_id": "ord_123"}]

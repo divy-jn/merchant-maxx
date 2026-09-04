@@ -28,8 +28,8 @@ _ensure_catalog_indexed()
 
 @tool
 def search_catalog(query: str, category: str = None) -> str:
-    """Search the merchant catalog for products, prices and availability."""
-    results = search_products_vector(query, top_k=5, category=category)
+    """Search the merchant catalog for products, prices and availability. Returns the top 3 most relevant results."""
+    results = search_products_vector(query, top_k=3, category=category)
     if not results:
         try:
             from razorpay_service import items
@@ -39,9 +39,9 @@ def search_catalog(query: str, category: str = None) -> str:
                     results.append({"name": item["name"], "id": item["id"], "price": item["amount"]/100,
                                     "currency": item["currency"], "description": item.get("description", ""),
                                     "category": "General", "in_stock": item.get("active", True)})
-                if len(results) >= 5: break
+                if len(results) >= 3: break
         except Exception as exc: logger.error("Catalog fallback failed: %s", exc)
-    if not results: return "No products found matching your search."
+    if not results: return "TOOL RESULT: No products found. WARNING: The requested product is NOT in our catalog. You MUST reply EXACTLY like this: 'I couldn't find a suitable <product> in the catalog. I can help you look for <alternative> instead. Want me to search those?' DO NOT explain what the product is."
     return "\n\n".join(f"- {p['name']} (ID: {p['id']})\n  Price: {p['currency']} {p['price']}\n  Category: {p.get('category','General')}\n  Description: {p.get('description','')}\n  In Stock: {'Yes' if p.get('in_stock',True) else 'No'}" for p in results)
 
 @tool
@@ -145,9 +145,9 @@ def create_razorpay_order(state: Annotated[dict, InjectedState], customer_email:
                 from services.payment_resolution import _recover_local_order
                 _recover_local_order(intent_id, existing_rzp_order_id, intent.get("customer_id"), intent.get("amount_paise"), intent.get("basket", []), intent.get("subtotal_paise", 0), intent.get("discount_paise", 0), intent.get("tax_paise", 0))
 
-            return (f"Razorpay Order already exists. Order ID: {existing_rzp_order_id}\n"
-                    f"Amount: Rs.{int(intent.get('amount_paise') or 0)/100:,.2f}\n"
-                    f"Payment is pending; verify Razorpay status before treating it as successful.")
+            return (f"Your order is already prepared.\n"
+                    f"Amount to pay: Rs.{int(intent.get('amount_paise') or 0)/100:,.2f}.\n"
+                    f"Please click **Pay Now** to complete your purchase securely.")
 
         if intent.get("purchase_state") != "USER_CONFIRMED" or not intent.get("user_confirmed"):
             return "Order blocked by Guardian: explicit confirmation is required."
@@ -276,15 +276,15 @@ def create_razorpay_order(state: Annotated[dict, InjectedState], customer_email:
                 # Ensure local recovery happens now to satisfy the duplicated request
                 from services.payment_resolution import _recover_local_order
                 _recover_local_order(intent_id, rzp_order["id"], intent.get("customer_id"), total, validated, subtotal, discount, tax)
-                return (f"Razorpay Order already exists. Order ID: {rzp_order['id']}\n"
-                        f"Amount: Rs.{total/100:,.2f}\n"
-                        f"Payment is pending; verify Razorpay status before treating it as successful.")
+                return (f"Your order is already prepared.\n"
+                        f"Amount to pay: Rs.{total/100:,.2f}.\n"
+                        f"Please click **Pay Now** to complete your purchase securely.")
             logger.error("CRITICAL GHOST ORDER AVOIDANCE: Local order mapping failed for intent %s, rzp_order %s: %s", intent_id, rzp_order["id"], exc)
             return "FATAL_ERROR: Order creation partially completed. Razorpay order exists but local mapping timed out. System will recover automatically."
 
-        return (f"Razorpay Order created successfully. Order ID: {rzp_order['id']}\n"
-                f"Amount: Rs.{total/100:,.2f}\n"
-                f"Payment is pending; verify Razorpay status before treating it as successful.")
+        return (f"Your order is ready.\n"
+                f"Amount to pay: Rs.{total/100:,.2f}.\n"
+                f"Please click **Pay Now** to complete your purchase securely.")
     except GuardianException as exc:
         try:
             supabase.table("purchase_intents").update({"purchase_state": "USER_CONFIRMED"}).eq("purchase_intent_id", intent_id).eq("purchase_state", "ORDER_CREATING").execute()

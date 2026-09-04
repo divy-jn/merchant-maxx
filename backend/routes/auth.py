@@ -65,6 +65,14 @@ def register(req: RegisterRequest):
         
     user = res.data[0]
     
+    # Also create customer record for foreign keys
+    if req.role == "customer":
+        supabase.table("customers").insert({
+            "customer_id": user["id"],
+            "name": user["name"],
+            "email": user["email"]
+        }).execute()
+
     token = create_access_token({
         "user_id": user["id"],
         "email": user["email"],
@@ -73,8 +81,8 @@ def register(req: RegisterRequest):
     })
     
     return AuthResponse(
-        token=token, 
-        user_id=user["id"], 
+        token=token,
+        user_id=user["id"],
         name=user["name"], 
         email=user["email"], 
         role=user["role"]

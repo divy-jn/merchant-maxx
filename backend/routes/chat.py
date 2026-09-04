@@ -143,8 +143,13 @@ def _get_actions_for_state(purchase_state: str, intent_id: str) -> list[ChatActi
     actions = []
     if purchase_state == "PRODUCT_SELECTED":
         actions.append(ChatAction(type="ADD_TO_CART", label="Add to Cart", payload={"purchase_intent_id": intent_id}))
+        actions.append(ChatAction(type="BUY_NOW", label="Buy Now", payload={"purchase_intent_id": intent_id}))
     elif purchase_state in {"PURCHASE_PENDING", "RECOMMENDATION_SHOWN"}:
         actions.append(ChatAction(type="PROCEED_TO_CHECKOUT", label="Proceed to Checkout", payload={"purchase_intent_id": intent_id}))
+        actions.append(ChatAction(type="ADD_MORE_ITEMS", label="Add More Items", payload={"purchase_intent_id": intent_id}))
+    elif purchase_state == "USER_CONFIRMED":
+        actions.append(ChatAction(type="PROCEED_TO_CHECKOUT", label="Proceed to Payment", payload={"purchase_intent_id": intent_id}))
+        actions.append(ChatAction(type="MODIFY_CART", label="Modify Cart", payload={"purchase_intent_id": intent_id}))
     return actions
 
 @router.post("/action", response_model=ChatResponse)
@@ -169,11 +174,41 @@ def handle_action(req: ActionRequest, current_user: dict = Depends(get_current_u
     if req.action == "ADD_TO_CART":
         if current_state == "PRODUCT_SELECTED":
             supabase.table("purchase_intents").update({"purchase_state": "PURCHASE_PENDING", "updated_at": now}).eq("purchase_intent_id", intent["purchase_intent_id"]).execute()
-            response_text = "Item added to cart."
+            basket = intent.get("basket") or []
+            basket_desc = ", ".join(f"{item.get('quantity', 1)}x {item.get('product_id', '')}" for item in basket)
+            response_text = f"Added to your cart: {basket_desc}. You can add more items or proceed to checkout when ready."
             supabase.table("messages").insert({"conversation_id": req.conversation_id, "role": "assistant", "content": response_text}).execute()
         else:
             response_text = "Cart is already updated."
-            
+
+    elif req.action == "BUY_NOW":
+        # Direct checkout: confirm + create order in one step
+        if current_state in {"PRODUCT_SELECTED", "PURCHASE_PENDING", "RECOMMENDATION_SHOWN"}:
+            res = supabase.table("purchase_intents").update({
+                "user_confirmed": True,
+                "purchase_state": "USER_CONFIRMED",
+                "confirmed_basket": intent.get("basket"),
+                "confirmed_amount_paise": intent.get("amount_paise"),
+                "confirmation_timestamp": now,
+                "updated_at": now
+            }).eq("purchase_intent_id", intent["purchase_intent_id"]).in_("purchase_state", ["PRODUCT_SELECTED", "PURCHASE_PENDING", "RECOMMENDATION_SHOWN"]).execute()
+            if res.data:
+                intent["purchase_state"] = "USER_CONFIRMED"
+                intent["user_confirmed"] = True
+            from agents.tools import create_razorpay_order
+            injected_state = {"purchase_context": {"purchase_intent_id": intent["purchase_intent_id"]}, "session_id": req.conversation_id}
+            rzp_response = create_razorpay_order.invoke({"state": injected_state})
+            response_text = str(rzp_response)
+            supabase.table("messages").insert({"conversation_id": req.conversation_id, "role": "assistant", "content": response_text}).execute()
+        elif current_state == "USER_CONFIRMED":
+            from agents.tools import create_razorpay_order
+            injected_state = {"purchase_context": {"purchase_intent_id": intent["purchase_intent_id"]}, "session_id": req.conversation_id}
+            rzp_response = create_razorpay_order.invoke({"state": injected_state})
+            response_text = str(rzp_response)
+            supabase.table("messages").insert({"conversation_id": req.conversation_id, "role": "assistant", "content": response_text}).execute()
+        else:
+            response_text = "Cannot proceed with Buy Now at this stage."
+
     elif req.action == "PROCEED_TO_CHECKOUT":
         if current_state in {"PURCHASE_PENDING", "RECOMMENDATION_SHOWN"}:
             if current_state == "RECOMMENDATION_SHOWN":
@@ -196,12 +231,36 @@ def handle_action(req: ActionRequest, current_user: dict = Depends(get_current_u
             
             from agents.tools import create_razorpay_order
             injected_state = {"purchase_context": {"purchase_intent_id": intent["purchase_intent_id"]}, "session_id": req.conversation_id}
-            rzp_response = create_razorpay_order(injected_state)
+            rzp_response = create_razorpay_order.invoke({"state": injected_state})
+            response_text = str(rzp_response)
+            supabase.table("messages").insert({"conversation_id": req.conversation_id, "role": "assistant", "content": response_text}).execute()
+        elif current_state == "USER_CONFIRMED":
+            # Already confirmed — just create the order without re-confirming
+            from agents.tools import create_razorpay_order
+            injected_state = {"purchase_context": {"purchase_intent_id": intent["purchase_intent_id"]}, "session_id": req.conversation_id}
+            rzp_response = create_razorpay_order.invoke({"state": injected_state})
             response_text = str(rzp_response)
             supabase.table("messages").insert({"conversation_id": req.conversation_id, "role": "assistant", "content": response_text}).execute()
         else:
             response_text = "Checkout already in progress."
-            
+
+    elif req.action == "ADD_MORE_ITEMS":
+        response_text = "Sure! Tell me what else you'd like to add, or browse the catalog."
+        supabase.table("messages").insert({"conversation_id": req.conversation_id, "role": "assistant", "content": response_text}).execute()
+
+    elif req.action == "MODIFY_CART":
+        if current_state == "USER_CONFIRMED":
+            supabase.table("purchase_intents").update({
+                "user_confirmed": False,
+                "purchase_state": "PURCHASE_PENDING",
+                "confirmed_basket": None,
+                "confirmed_amount_paise": None,
+                "confirmation_timestamp": None,
+                "updated_at": now
+            }).eq("purchase_intent_id", intent["purchase_intent_id"]).eq("purchase_state", "USER_CONFIRMED").execute()
+        response_text = "Your cart is now unlocked for changes. Tell me what you'd like to modify."
+        supabase.table("messages").insert({"conversation_id": req.conversation_id, "role": "assistant", "content": response_text}).execute()
+
     elif req.action == "VERIFY_PAYMENT":
         if current_state in {"PAYMENT_PENDING", "PAYMENT_SUCCESS", "ORDER_CREATED"}:
             from agents.tools import check_payment_status
@@ -245,6 +304,9 @@ def chat_with_maxx(req: ChatRequest, current_user: dict = Depends(get_current_us
         supabase.table("messages").insert({"conversation_id": conv_id, "role": "user", "content": req.message}).execute()
         intent = _load_active_intent(conv_id)
         confirmed_now = bool(intent and intent.get("purchase_state") in {"PURCHASE_PENDING", "RECOMMENDATION_SHOWN"} and CONFIRM_RE.match(req.message.strip()))
+        # Also detect confirmation when already USER_CONFIRMED (prevents re-asking)
+        already_confirmed = bool(intent and intent.get("purchase_state") == "USER_CONFIRMED" and intent.get("user_confirmed") and CONFIRM_RE.match(req.message.strip()))
+
         if confirmed_now:
             if intent.get("purchase_state") == "RECOMMENDATION_SHOWN":
                 intent = _accept_latest_recommendation(intent)
@@ -266,9 +328,32 @@ def chat_with_maxx(req: ChatRequest, current_user: dict = Depends(get_current_us
                     if fresh and fresh.data:
                         intent = fresh.data
 
+        # ── DETERMINISTIC CHECKOUT: skip the LLM entirely when user has confirmed ──
+        # This prevents the Closer from re-asking for confirmation.
+        if confirmed_now or already_confirmed:
+            from agents.tools import create_razorpay_order
+            injected_state = {"purchase_context": {"purchase_intent_id": intent["purchase_intent_id"]}, "session_id": conv_id}
+            rzp_response = str(create_razorpay_order.invoke({"state": injected_state}))
+            supabase.table("messages").insert({"conversation_id": conv_id, "role": "assistant", "content": rzp_response}).execute()
+
+            fresh_intent_res = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent["purchase_intent_id"]).maybe_single().execute()
+            fresh_intent = fresh_intent_res.data if fresh_intent_res else None
+            checkout_data = _get_checkout_data(fresh_intent)
+            actions = _get_actions_for_state(fresh_intent.get("purchase_state"), fresh_intent["purchase_intent_id"]) if fresh_intent else []
+
+            return ChatResponse(
+                response=rzp_response,
+                conversation_id=conv_id,
+                checkout_data=checkout_data,
+                actions=actions,
+                purchase_state=fresh_intent.get("purchase_state") if fresh_intent else "USER_CONFIRMED"
+            )
+
+        # ── Normal LLM path (non-confirmation messages) ──
         context, purchase_state, user_confirmed = {}, "IDLE", False
         if intent:
-            purchase_state = intent.get("purchase_state", "PURCHASE_PENDING")
+            # Use the LATEST state from intent (may have been updated above)
+            purchase_state = intent.get("purchase_state", "IDLE")
             user_confirmed = bool(intent.get("user_confirmed"))
             context = {"purchase_intent_id": intent["purchase_intent_id"], "basket_items": intent.get("basket") or [], "amount_paise": int(intent.get("amount_paise") or 0), "intent_description": "Persisted purchase intent"}
         

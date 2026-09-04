@@ -61,14 +61,8 @@ def closer_node(state: dict):
     if purchase_state in {"PAYMENT_PENDING", "ORDER_CREATED"}:
         return {"messages": [AIMessage(content="Your order is ready for payment. Please continue to the payment window to complete checkout.")]}
 
-    # Deterministic checkout trigger: once authoritative state says the user has
-    # confirmed the basket, explicit checkout language should never be turned
-    # into a generic refusal by the model.
-    if (
-        purchase_state == "USER_CONFIRMED"
-        and state.get("user_confirmed") is True
-        and CHECKOUT_RE.search(latest_text)
-    ):
+    # ── Deterministic short-circuit: user already confirmed → issue order ──
+    if purchase_state == "USER_CONFIRMED" and state.get("user_confirmed") is True:
         tool_call = {
             "name": "create_razorpay_order",
             "args": {},
@@ -76,6 +70,16 @@ def closer_node(state: dict):
             "type": "tool_call",
         }
         return {"messages": [AIMessage(content="", tool_calls=[tool_call])]}
+
+    # ── Deterministic for PURCHASE_PENDING: ask for confirmation clearly ──
+    if purchase_state == "PURCHASE_PENDING":
+        ctx = state.get("purchase_context") or {}
+        basket = ctx.get("basket_items", [])
+        amount = ctx.get("amount_paise", 0)
+        if basket:
+            item_str = "1 item" if len(basket) == 1 else f"{len(basket)} items"
+            return {"messages": [AIMessage(content=f"Your cart contains {item_str}. Total: Rs.{amount/100:,.2f}.\n\nWould you like to proceed to checkout? Just say **\"yes\"** or **\"confirm\"** to place your order.")]}
+        return {"messages": [AIMessage(content="Your cart is ready. Would you like to proceed to checkout?")]}
 
     messages.insert(0, SystemMessage(content=closer_prompt))
     state_view = SystemMessage(content=(

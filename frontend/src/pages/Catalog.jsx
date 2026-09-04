@@ -50,7 +50,9 @@ export default function Catalog() {
             </div>
             <p className="product-desc">{product.description}</p>
             <div className="product-footer">
-              <span className="product-id">{product.id}</span>
+              <span className={`product-status ${product.active !== false ? 'in-stock' : 'out-of-stock'}`}>
+                {product.active !== false ? '● In Stock' : '○ Out of Stock'}
+              </span>
               <button className="btn btn-outline" style={{ padding: '0.25rem 0.75rem', fontSize: '0.875rem' }}>
                 View
               </button>
