@@ -141,7 +141,7 @@ def test_create_razorpay_order_fails_if_local_persistence_fails(monkeypatch):
         "state": {"session_id": conv_id, "purchase_context": {"purchase_intent_id": intent_id, "basket": [{"product_id": "item_laptop", "quantity": 1}], "amount_paise": 50000}},
     })
     
-    assert "System will recover automatically" in res
+    assert "We're still preparing your payment" in res
     
     # Check that state is PAYMENT_PENDING to allow for recovery
     intent = supabase.table("purchase_intents").select("purchase_state, razorpay_order_id").eq("purchase_intent_id", intent_id).execute().data[0]

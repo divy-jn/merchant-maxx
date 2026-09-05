@@ -55,6 +55,25 @@ export default function AgentChat({ sessionId = 'guest' }) {
 
   useEffect(() => { loadConversations(); }, [loadConversations]);
 
+  // Restore guest conversation after login and claim ownership
+  useEffect(() => {
+    if (!token) return;
+    const pendingConvId = localStorage.getItem('pending_conv_id');
+    if (!pendingConvId) return;
+    localStorage.removeItem('pending_conv_id');
+    // Claim the orphan conversation on the backend
+    fetch(`${API_BASE_URL}/chat/claim`, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversation_id: pendingConvId })
+    }).then(res => {
+      if (res.ok) {
+        setCurrentConvId(pendingConvId);
+        loadConversations();
+      }
+    }).catch(() => {});
+  }, [token, authHeaders, loadConversations]);
+
   useEffect(() => {
     if (!currentConvId || currentConvId === 'guest') {
       setMessages([{ sender: 'bot', text: WELCOME }]);
@@ -93,6 +112,14 @@ export default function AgentChat({ sessionId = 'guest' }) {
 
   const handleActionClick = async (actionType, payload) => {
     if (loading) return;
+    // Handle LOGIN action: save current chat, then redirect to sign-in page
+    if (actionType === 'LOGIN') {
+      if (currentConvId && currentConvId !== 'guest') {
+        localStorage.setItem('pending_conv_id', currentConvId);
+      }
+      window.location.href = '/login';
+      return;
+    }
     setLoading(true);
     setMessages(prev => [...prev, { sender: 'user', text: `[Action: ${actionType.replace(/_/g, ' ')}]` }]);
     try {
@@ -106,7 +133,7 @@ export default function AgentChat({ sessionId = 'guest' }) {
       const newMsg = { sender: 'bot', text: data.response || '' };
       if (data.checkout_data) newMsg.checkout_data = data.checkout_data;
       if (data.actions) newMsg.actions = data.actions;
-      
+
       setMessages(prev => {
         const updated = [...prev];
         if (data.checkout_data || data.purchase_state === 'PAYMENT_SUCCESS') {
@@ -130,7 +157,7 @@ export default function AgentChat({ sessionId = 'guest' }) {
 
   const openCheckout = useCallback((orderId, amountStr, purchaseIntentId) => {
     console.log('[Checkout Diagnostics] Public Key present:', !!RAZORPAY_KEY_ID, '| Script loaded:', !!window.Razorpay, '| Order ID:', orderId, '| Amount:', amountStr);
-    
+
     if (paymentInProgress) return;
     if (!purchaseIntentId) {
       setMessages(prev => [...prev, { sender: 'bot', text: 'This checkout session is missing its purchase reference. Please refresh and try again.' }]);
@@ -192,7 +219,20 @@ export default function AgentChat({ sessionId = 'guest' }) {
         setMessages(prev => [...prev, { sender: 'bot', text: `Payment failed: ${paymentFailure.error?.description || 'Please try again'}.` }]);
         setPaymentInProgress(false);
       });
-      rzp.open();
+      // Handle potential internal Razorpay errors
+      rzp.on('payment.error', err => {
+        setMessages(prev => [...prev, { sender: 'bot', text: 'Payment error encountered. Please try again.' }]);
+        setPaymentInProgress(false);
+      });
+
+      const rzpOpen = rzp.open();
+      // If open() returns a promise (e.g. if blocked), handle rejection
+      if (rzpOpen && typeof rzpOpen.catch === 'function') {
+        rzpOpen.catch(err => {
+          setMessages(prev => [...prev, { sender: 'bot', text: 'Unable to open payment window. Please try again.' }]);
+          setPaymentInProgress(false);
+        });
+      }
     } catch {
       setMessages(prev => [...prev, { sender: 'bot', text: 'Unable to open payment window. Please try again.' }]);
       setPaymentInProgress(false);
@@ -207,7 +247,7 @@ export default function AgentChat({ sessionId = 'guest' }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Message failed');
       if (data.conversation_id && data.conversation_id !== currentConvId) setCurrentConvId(data.conversation_id);
-      
+
       const newMsg = { sender: 'bot', text: data.response || '' };
       if (data.checkout_data) newMsg.checkout_data = data.checkout_data;
       if (data.actions) newMsg.actions = data.actions;
@@ -242,7 +282,7 @@ export default function AgentChat({ sessionId = 'guest' }) {
     if (msg?.checkout_data) {
       const d = msg.checkout_data;
       if (d._stale) {
-        content.push(<div key="checkout-stale" className="checkout-card stale" style={{opacity: 0.5}}><p><i>Checkout completed or expired.</i></p></div>);
+        // Do not render anything for stale checkout cards to avoid confusing the user during recovery.
       } else {
         const formattedAmount = (d.amount_paise / 100).toLocaleString('en-IN', { style: 'currency', currency: 'INR' });
         content.push(
@@ -273,11 +313,11 @@ export default function AgentChat({ sessionId = 'guest' }) {
         );
       }
     }
-    
+
     if (msg?.sender === 'user') {
       content.push(<span key="text">{text}</span>);
     } else {
-      if (text) content.push(<ReactMarkdown key="text" className="markdown-body">{text}</ReactMarkdown>);
+      if (text) content.push(<div key="text" className="markdown-body"><ReactMarkdown>{text}</ReactMarkdown></div>);
     }
 
     if (msg?.actions && msg.actions.length > 0) {
@@ -291,7 +331,7 @@ export default function AgentChat({ sessionId = 'guest' }) {
         </div>
       );
     }
-    
+
     return content;
   };
 

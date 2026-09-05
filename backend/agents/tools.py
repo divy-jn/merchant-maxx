@@ -241,7 +241,7 @@ def create_razorpay_order(state: Annotated[dict, InjectedState], customer_email:
                 "order_id": local_id,
                 "purchase_intent_id": intent_id,
                 "merchant_id": "merchant_mxx_001",
-                "customer_id": intent.get("customer_id"),
+                "customer_id": intent.get("customer_id") or None,
                 "status": "CREATED",
                 "subtotal_paise": subtotal,
                 "discount_paise": discount,
@@ -275,12 +275,12 @@ def create_razorpay_order(state: Annotated[dict, InjectedState], customer_email:
                 logger.info("Idempotent duplicate creation detected for intent %s", intent_id)
                 # Ensure local recovery happens now to satisfy the duplicated request
                 from services.payment_resolution import _recover_local_order
-                _recover_local_order(intent_id, rzp_order["id"], intent.get("customer_id"), total, validated, subtotal, discount, tax)
+                _recover_local_order(intent_id, rzp_order["id"], intent.get("customer_id"), total, basket, subtotal, discount, tax)
                 return (f"Your order is already prepared.\n"
                         f"Amount to pay: Rs.{total/100:,.2f}.\n"
                         f"Please click **Pay Now** to complete your purchase securely.")
             logger.error("CRITICAL GHOST ORDER AVOIDANCE: Local order mapping failed for intent %s, rzp_order %s: %s", intent_id, rzp_order["id"], exc)
-            return "FATAL_ERROR: Order creation partially completed. Razorpay order exists but local mapping timed out. System will recover automatically."
+            return "We're still preparing your payment. Please try Pay Now again in a moment."
 
         return (f"Your order is ready.\n"
                 f"Amount to pay: Rs.{total/100:,.2f}.\n"

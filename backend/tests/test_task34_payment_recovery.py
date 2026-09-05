@@ -99,7 +99,7 @@ def test_phase8_1_create_razorpay_order_fails_locally(fake_db, mock_orders):
     
     state = {"purchase_context": {"purchase_intent_id": "pi_123"}, "session_id": "sess_1"}
     result = create_razorpay_order.invoke({"state": state})
-    assert "System will recover automatically" in result
+    assert "We're still preparing your payment" in result
 
 def test_phase8_4_retry_after_persistence_failure(fake_db, mock_orders):
     fake_db.data_store["purchase_intents"] = {

@@ -58,14 +58,14 @@ def verify_conversation_ownership(conv_id: str, current_user: dict):
         if '22P02' in str(e):
             raise HTTPException(status_code=400, detail="Invalid conversation ID format")
         raise e
-    
+
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
-        
+
     owner_id = conv.get("user_id")
     user_id = current_user.get("user_id") if current_user else None
-    
-    if owner_id != user_id:
+
+    if owner_id and owner_id != user_id:
         raise HTTPException(status_code=403, detail="Not authorized to access this conversation")
 
 def _load_active_intent(conv_id: str):
@@ -95,20 +95,20 @@ def _accept_latest_recommendation(intent: dict):
         if p: subtotal += int(p["price_paise"]) * int(item.get("quantity", 1))
     now = datetime.now(timezone.utc).isoformat()
     supabase.table("recommendation_events").update({"status": "ACCEPTED", "accepted_at": now}).eq("recommendation_id", rec["recommendation_id"]).execute()
-    
+
     res = supabase.table("purchase_intents").update({
-        "basket": basket, 
-        "subtotal_paise": subtotal, 
-        "amount_paise": subtotal, 
-        "recommendation_id": rec["recommendation_id"], 
-        "purchase_state": "USER_CONFIRMED", 
-        "user_confirmed": True, 
-        "confirmed_basket": basket, 
-        "confirmed_amount_paise": subtotal, 
-        "confirmation_timestamp": now, 
+        "basket": basket,
+        "subtotal_paise": subtotal,
+        "amount_paise": subtotal,
+        "recommendation_id": rec["recommendation_id"],
+        "purchase_state": "USER_CONFIRMED",
+        "user_confirmed": True,
+        "confirmed_basket": basket,
+        "confirmed_amount_paise": subtotal,
+        "confirmation_timestamp": now,
         "updated_at": now
     }).eq("purchase_intent_id", intent["purchase_intent_id"]).neq("purchase_state", "PAYMENT_SUCCESS").execute()
-    
+
     if not res.data:
         fresh_intent = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent["purchase_intent_id"]).maybe_single().execute()
         if fresh_intent and fresh_intent.data:
@@ -156,21 +156,31 @@ def _get_actions_for_state(purchase_state: str, intent_id: str) -> list[ChatActi
 def handle_action(req: ActionRequest, current_user: dict = Depends(get_current_user)):
     if not supabase: raise HTTPException(status_code=503, detail="Supabase not configured")
     verify_conversation_ownership(req.conversation_id, current_user)
-    
+
+    # ── Login gate: all purchase actions require authentication ──
+    PURCHASE_ACTIONS = {"BUY_NOW", "ADD_TO_CART", "PROCEED_TO_CHECKOUT", "VERIFY_PAYMENT"}
+    if req.action in PURCHASE_ACTIONS and not current_user:
+        return ChatResponse(
+            response="Please sign in to continue with your purchase. You can browse products as a guest, but checkout requires a logged-in account.",
+            conversation_id=req.conversation_id,
+            actions=[ChatAction(type="LOGIN", label="Sign In", payload={})],
+            purchase_state=None
+        )
+
     intent_id = req.payload.get("purchase_intent_id") if req.payload else None
     if not intent_id:
         intent = _load_active_intent(req.conversation_id)
     else:
         intent_res = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent_id).maybe_single().execute()
         intent = intent_res.data if intent_res else None
-        
+
     if not intent or intent.get("conversation_id") != req.conversation_id:
         raise HTTPException(status_code=400, detail="Invalid or stale purchase intent")
-    
+
     current_state = intent.get("purchase_state")
     now = datetime.now(timezone.utc).isoformat()
     response_text = ""
-    
+
     if req.action == "ADD_TO_CART":
         if current_state == "PRODUCT_SELECTED":
             supabase.table("purchase_intents").update({"purchase_state": "PURCHASE_PENDING", "updated_at": now}).eq("purchase_intent_id", intent["purchase_intent_id"]).execute()
@@ -228,7 +238,7 @@ def handle_action(req: ActionRequest, current_user: dict = Depends(get_current_u
                         intent = fresh.data
                 else:
                     intent["purchase_state"] = "USER_CONFIRMED"
-            
+
             from agents.tools import create_razorpay_order
             injected_state = {"purchase_context": {"purchase_intent_id": intent["purchase_intent_id"]}, "session_id": req.conversation_id}
             rzp_response = create_razorpay_order.invoke({"state": injected_state})
@@ -265,20 +275,20 @@ def handle_action(req: ActionRequest, current_user: dict = Depends(get_current_u
         if current_state in {"PAYMENT_PENDING", "PAYMENT_SUCCESS", "ORDER_CREATED"}:
             from agents.tools import check_payment_status
             injected_state = {"purchase_context": {"purchase_intent_id": intent["purchase_intent_id"]}, "session_id": req.conversation_id}
-            response_text = check_payment_status(injected_state)
+            response_text = check_payment_status.invoke({"state": injected_state})
             supabase.table("messages").insert({"conversation_id": req.conversation_id, "role": "assistant", "content": response_text}).execute()
         else:
             response_text = "No pending payment found."
-            
+
     else:
         raise HTTPException(status_code=400, detail="Invalid action")
-        
+
     fresh_intent_res = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent["purchase_intent_id"]).maybe_single().execute()
     fresh_intent = fresh_intent_res.data if fresh_intent_res else None
-    
+
     actions = _get_actions_for_state(fresh_intent.get("purchase_state"), fresh_intent["purchase_intent_id"]) if fresh_intent else []
     checkout_data = _get_checkout_data(fresh_intent)
-    
+
     return ChatResponse(
         response=response_text,
         conversation_id=req.conversation_id,
@@ -294,9 +304,9 @@ def chat_with_maxx(req: ChatRequest, current_user: dict = Depends(get_current_us
     try:
         user_id = current_user.get("user_id") if current_user else None
         conv_id = req.conversation_id
-        
+
         verify_conversation_ownership(conv_id, current_user)
-        
+
         if not conv_id or conv_id == "guest":
             data = {"title": req.message[:50]}
             if user_id: data["user_id"] = user_id
@@ -313,14 +323,14 @@ def chat_with_maxx(req: ChatRequest, current_user: dict = Depends(get_current_us
             else:
                 now = datetime.now(timezone.utc).isoformat()
                 res = supabase.table("purchase_intents").update({
-                    "user_confirmed": True, 
-                    "purchase_state": "USER_CONFIRMED", 
-                    "confirmed_basket": intent.get("basket"), 
-                    "confirmed_amount_paise": intent.get("amount_paise"), 
-                    "confirmation_timestamp": now, 
+                    "user_confirmed": True,
+                    "purchase_state": "USER_CONFIRMED",
+                    "confirmed_basket": intent.get("basket"),
+                    "confirmed_amount_paise": intent.get("amount_paise"),
+                    "confirmation_timestamp": now,
                     "updated_at": now
                 }).eq("purchase_intent_id", intent["purchase_intent_id"]).in_("purchase_state", ["PURCHASE_PENDING", "RECOMMENDATION_SHOWN"]).execute()
-                
+
                 if res.data:
                     intent = dict(intent, user_confirmed=True, purchase_state="USER_CONFIRMED", confirmed_basket=intent.get("basket"), confirmed_amount_paise=intent.get("amount_paise"))
                 else:
@@ -331,6 +341,16 @@ def chat_with_maxx(req: ChatRequest, current_user: dict = Depends(get_current_us
         # ── DETERMINISTIC CHECKOUT: skip the LLM entirely when user has confirmed ──
         # This prevents the Closer from re-asking for confirmation.
         if confirmed_now or already_confirmed:
+            # ── Login gate: checkout requires authentication ──
+            if not current_user:
+                login_msg = "Please sign in to complete your purchase. You can browse products as a guest, but checkout requires a logged-in account."
+                supabase.table("messages").insert({"conversation_id": conv_id, "role": "assistant", "content": login_msg}).execute()
+                return ChatResponse(
+                    response=login_msg,
+                    conversation_id=conv_id,
+                    actions=[ChatAction(type="LOGIN", label="Sign In", payload={})],
+                    purchase_state=intent.get("purchase_state")
+                )
             from agents.tools import create_razorpay_order
             injected_state = {"purchase_context": {"purchase_intent_id": intent["purchase_intent_id"]}, "session_id": conv_id}
             rzp_response = str(create_razorpay_order.invoke({"state": injected_state}))
@@ -356,7 +376,7 @@ def chat_with_maxx(req: ChatRequest, current_user: dict = Depends(get_current_us
             purchase_state = intent.get("purchase_state", "IDLE")
             user_confirmed = bool(intent.get("user_confirmed"))
             context = {"purchase_intent_id": intent["purchase_intent_id"], "basket_items": intent.get("basket") or [], "amount_paise": int(intent.get("amount_paise") or 0), "intent_description": "Persisted purchase intent"}
-        
+
         import logging
         logger = logging.getLogger(__name__)
         try:
@@ -371,12 +391,12 @@ def chat_with_maxx(req: ChatRequest, current_user: dict = Depends(get_current_us
         except Exception as e:
             logger.error(f"LLM Provider Error: {type(e).__name__} - {e}")
             response = "I am currently experiencing technical difficulties. Please try again later."
-        
+
         now_str = datetime.now(timezone.utc).isoformat()
         supabase.table("recommendation_events").update({"status": "SHOWN", "shown_at": now_str}).eq("session_id", conv_id).eq("status", "GENERATED").execute()
-        
+
         supabase.table("messages").insert({"conversation_id": conv_id, "role": "assistant", "content": str(response)}).execute()
-        
+
         checkout_data = None
         actions = []
         final_purchase_state = purchase_state
@@ -407,7 +427,7 @@ def get_chat_history(conversation_id: str = None, current_user: dict = Depends(g
     verify_conversation_ownership(conversation_id, current_user)
     res = supabase.table("messages").select("*").eq("conversation_id", conversation_id).order("created_at", desc=False).execute()
     messages = [{"sender": "user" if m["role"] == "user" else "bot", "text": m["content"]} for m in res.data]
-    
+
     intent = _load_active_intent(conversation_id)
     checkout_data = _get_checkout_data(intent)
     if checkout_data:
@@ -430,3 +450,31 @@ def clear_chat_history(conversation_id: str, current_user: dict = Depends(get_cu
 def list_conversations(current_user: dict = Depends(get_current_user)):
     if not supabase or not current_user: return []
     return supabase.table("conversations").select("*").eq("user_id", current_user["user_id"]).order("updated_at", desc=True).execute().data
+
+class ClaimRequest(BaseModel):
+    conversation_id: str
+
+@router.post("/claim")
+def claim_conversation(req: ClaimRequest, current_user: dict = Depends(get_current_user)):
+    """Claim an orphan guest conversation after login. Only works if the conversation has no owner."""
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+
+    user_id = current_user["user_id"]
+
+    # Only claim conversations with no owner (guest conversations)
+    res = supabase.table("conversations").update({"user_id": user_id}).eq("id", req.conversation_id).is_("user_id", "null").execute()
+    if not res.data:
+        # Either doesn't exist or already owned — check if it's already theirs
+        existing = supabase.table("conversations").select("user_id").eq("id", req.conversation_id).maybe_single().execute()
+        if existing and existing.data and existing.data.get("user_id") == user_id:
+            pass  # Already theirs, that's fine
+        else:
+            raise HTTPException(status_code=403, detail="Cannot claim this conversation")
+
+    # Also link the customer_id on any active purchase intents in this conversation
+    supabase.table("purchase_intents").update({"customer_id": user_id}).eq("conversation_id", req.conversation_id).is_("customer_id", "null").execute()
+
+    return {"status": "claimed", "conversation_id": req.conversation_id}
