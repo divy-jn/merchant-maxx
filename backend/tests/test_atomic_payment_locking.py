@@ -59,16 +59,52 @@ def test_toctou_race_condition(monkeypatch):
     monkeypatch.setattr(agents.guardian, "validate_action", lambda *a, **k: None)
     monkeypatch.setattr(agents.scout, "get_llm", lambda: MockLLM())
 
+    # --- BEGIN TEST-ONLY LEDGER SUPABASE PROXY ---
+    # Purpose: make the test deterministic by preventing incidental audit logging
+    # network failures from affecting the core purchase_intents concurrency behavior.
+    # We patch only the supabase reference inside agents.ledger so that audit_log
+    # and agent_audit writes are no-ops while all other DB operations still use
+    # the real supabase client.
+    import agents.ledger as _agents_ledger
+    _real_supabase = supabase
+
+    class _LedgerSupabaseProxy:
+        """
+        Proxy the real supabase client for ledger so audit writes (audit_log, agent_audit)
+        become no-ops while all other table() calls go to the real client.
+        """
+        def table(self, name):
+            # short-circuit ledger-only audit tables
+            if name in ("audit_log", "agent_audit"):
+                class _NoOp:
+                    def insert(self, *a, **k): return self
+                    def update(self, *a, **k): return self
+                    def execute(self, *a, **k):
+                        # mimic minimal supabase response object shape used by code (data attribute)
+                        return type("R", (), {"data": []})()
+                    def eq(self, *a, **k): return self
+                    def maybe_single(self): return self
+                    def limit(self, *a, **k): return self
+                    def select(self, *a, **k): return self
+                    def order(self, *a, **k): return self
+                return _NoOp()
+            # delegate everything else to the real supabase so production DB behavior remains exercised
+            return _real_supabase.table(name)
+
+    # patch only the ledger module's imported supabase instance
+    monkeypatch.setattr(_agents_ledger, "supabase", _LedgerSupabaseProxy())
+    # --- END TEST-ONLY LEDGER SUPABASE PROXY ---
+
     closer_result = []
     def closer_thread():
-        state = {"session_id": conv_id, "purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "purchase_state": "USER_CONFIRMED", "user_confirmed": True}
+        state = {"session_id": conv_id, "purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "purchase_state": "USER_CONFIRMED", "use[...": True}
         res = create_razorpay_order.invoke({"state": state})
         closer_result.append(res)
 
     scout_result = []
     def scout_thread():
         time.sleep(0.3) # Wait for closer to reserve the intent
-        state = {"purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "session_id": conv_id, "messages": [ToolMessage(content="Product ID: item_mouse", tool_call_id="call_1")]}
+        state = {"purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "session_id": conv_id, "messages": [ToolMessage(content="Pro[...")], "use[...]": True}
         scout_node(state)
         scout_result.append(True)
 
@@ -96,7 +132,7 @@ def test_toctou_race_condition(monkeypatch):
 def test_normal_unlocked_basket_mutation(monkeypatch):
     monkeypatch.setattr(agents.scout, "get_llm", lambda: MockLLM())
     intent_id, conv_id = setup_intent("PRODUCT_SELECTED")
-    state = {"purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "session_id": conv_id, "messages": [ToolMessage(content="Product ID: item_mouse", tool_call_id="call_0")]}
+    state = {"purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "session_id": conv_id, "messages": [ToolMessage(content="Product[...")], "use[...]": True}
     scout_node(state)
     intent = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent_id).execute().data[0]
     assert len(intent.get("basket", [])) == 2
@@ -104,7 +140,7 @@ def test_normal_unlocked_basket_mutation(monkeypatch):
 def test_locked_intent_mutation_creates_clone(monkeypatch):
     monkeypatch.setattr(agents.scout, "get_llm", lambda: MockLLM())
     intent_id, conv_id = setup_intent("PAYMENT_PENDING", razorpay_order_id="order_123")
-    state = {"purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "session_id": conv_id, "messages": [ToolMessage(content="Product ID: item_mouse", tool_call_id="call_0")]}
+    state = {"purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "session_id": conv_id, "messages": [ToolMessage(content="Produc[...")], "use[...]": True}
     scout_node(state)
 
     intent = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent_id).execute().data[0]
@@ -124,7 +160,7 @@ def test_razorpay_api_failure_does_not_corrupt(monkeypatch):
     import agents.guardian
     monkeypatch.setattr(agents.guardian, "validate_action", lambda *a, **k: None)
 
-    state = {"session_id": conv_id, "purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "purchase_state": "USER_CONFIRMED", "user_confirmed": True}
+    state = {"session_id": conv_id, "purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "purchase_state": "USER_CONFIRMED", "use[...": True}
     res = create_razorpay_order.invoke({"state": state})
 
     intent = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent_id).execute().data[0]
@@ -135,7 +171,7 @@ def test_razorpay_api_failure_does_not_corrupt(monkeypatch):
 def test_terminal_payment_success_cannot_be_mutated(monkeypatch):
     monkeypatch.setattr(agents.scout, "get_llm", lambda: MockLLM())
     intent_id, conv_id = setup_intent("PAYMENT_SUCCESS", razorpay_order_id="order_xyz")
-    state = {"purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "session_id": conv_id, "messages": [ToolMessage(content="Product ID: item_mouse", tool_call_id="call_0")]}
+    state = {"purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "session_id": conv_id, "messages": [ToolMessage(content="Produc[...")], "use[...]": True}
     scout_node(state)
 
     intent = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent_id).execute().data[0]
