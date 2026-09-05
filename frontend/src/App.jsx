@@ -4,6 +4,7 @@ import Catalog from './pages/Catalog';
 import AgentChat from './pages/AgentChat';
 import AuditTrail from './pages/AuditTrail';
 import Login from './pages/Login';
+import Register from './pages/Register';
 import { AuthProvider } from './context/AuthContext';
 import './App.css';
 
@@ -13,6 +14,7 @@ function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
           <Route path="/" element={<DashboardLayout />}>
             <Route index element={<Catalog />} />
             <Route path="chat" element={<AgentChat />} />
