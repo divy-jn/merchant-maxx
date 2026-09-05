@@ -292,7 +292,16 @@ def create_razorpay_order(state: Annotated[dict, InjectedState], customer_email:
             supabase.table("purchase_intents").update({"purchase_state": "PURCHASE_PENDING", "user_confirmed": False}).eq("purchase_intent_id", intent_id).eq("purchase_state", "ORDER_CREATING").execute()
         except Exception:
             pass
-        return f"Order blocked by Guardian: {exc}"
+        # Return customer-safe message (never expose rule IDs)
+        exc_str = str(exc)
+        if "RULE_01_MAX_TX_LIMIT" in exc_str:
+            return "I'm sorry, but this purchase exceeds the maximum allowed transaction limit of ₹10,000. Please reduce your cart total to proceed."
+        elif "RULE_02_MAX_QTY_LIMIT" in exc_str:
+            return "I'm sorry, but you have exceeded the maximum allowed quantity per item. Please reduce the quantity to proceed."
+        elif "RULE_03_MAX_ITEMS_LIMIT" in exc_str:
+            return "I'm sorry, but you have exceeded the maximum number of items allowed in a single order."
+        else:
+            return "Your purchase cannot be processed at this time due to our security policies. Please review your cart and try again."
     except Exception:
         logger.exception("Razorpay order creation failed for intent %s", intent_id)
         try:

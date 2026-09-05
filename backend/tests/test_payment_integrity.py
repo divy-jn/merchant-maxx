@@ -177,7 +177,7 @@ def test_create_razorpay_order_maintains_db_uniqueness():
             config={"configurable": {"thread_id": "t1"}}
         )
         # Should return the existing order safely, rather than crashing
-        assert "Order blocked by Guardian" in response and "RULE_05_IDEMPOTENCY" in response
+        assert "Your purchase cannot be processed at this time due to our security policies" in response
 
 def test_webhook_cross_check_no_downgrade_or_cross_mutation():
     from routes.webhooks import handle_razorpay_webhook
