@@ -120,6 +120,8 @@ def test_webhook_integration_success(monkeypatch):
     import asyncio
     from fastapi import Request
     
+    monkeypatch.setattr("config.settings.RAZORPAY_WEBHOOK_SECRET", "test_secret")
+
     pid1, _ = setup_inventory_test()
     # set to 1
     supabase.table("products").update({"inventory_qty": 1}).eq("product_id", pid1).execute()
@@ -183,6 +185,8 @@ def test_webhook_integration_insufficient_inventory(monkeypatch):
     import razorpay_service.client
     import asyncio
     
+    monkeypatch.setattr("config.settings.RAZORPAY_WEBHOOK_SECRET", "test_secret")
+
     pid1, _ = setup_inventory_test()
     # set to 0
     supabase.table("products").update({"inventory_qty": 0}).eq("product_id", pid1).execute()
