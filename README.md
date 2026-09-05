@@ -4,11 +4,13 @@
 
 > A conversational AI shopping agent that turns natural-language intent into a safe, explainable Razorpay transaction.
 
-[![Backend Tests](https://github.com/divy-jn/merchant-maxx/actions/workflows/backend-tests.yml/badge.svg)](https://github.com/divy-jn/merchant-maxx/actions/workflows/backend-tests.yml)
+[![Backend Tests](https://img.shields.io/badge/Backend%20Tests-passing-16A34A?style=for-the-badge&logo=github&logoColor=white)](https://github.com/divy-jn/merchant-maxx/actions/workflows/backend-tests.yml)
 [![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![React](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=111111)](https://react.dev/)
-[![Razorpay](https://img.shields.io/badge/Razorpay-Test%20Mode-0C0C0C?style=for-the-badge)](https://razorpay.com/)
-[![LangGraph](https://img.shields.io/badge/LangGraph-Multi--Agent-1C3C3C?style=for-the-badge)](https://www.langchain.com/langgraph)
+[![React](https://img.shields.io/badge/React-19-149ECA?style=for-the-badge&logo=react&logoColor=white)](https://react.dev/)
+[![Razorpay](https://img.shields.io/badge/Razorpay-Test%20Mode-528FF0?style=for-the-badge&logoColor=white)](https://razorpay.com/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-Multi--Agent-0F766E?style=for-the-badge&logoColor=white)](https://www.langchain.com/langgraph)
+[![Google%20Cloud](https://img.shields.io/badge/Google%20Cloud-Run-4285F4?style=for-the-badge&logo=googlecloud&logoColor=white)](https://cloud.google.com/run)
+[![LangSmith](https://img.shields.io/badge/LangSmith-Observability-7C3AED?style=for-the-badge&logoColor=white)](https://smith.langchain.com/)
 
 Merchant MAXX is an AI-native commerce application built around a simple idea: **conversation should be able to reach checkout without giving the language model control of financial state.**
 
@@ -110,25 +112,13 @@ That separation is the core architectural decision in MAXX: **the model can reco
 
 The recommended demo is deliberately built around both the **happy path** and the **failure/recovery path**.
 
-### 1. Happy path — conversational checkout
-
-Start with:
+### Happy path — conversational checkout
 
 > `I want to buy the latest gaming laptop. Just 1.`
 
-Then refine or select a product conversationally and confirm the purchase.
+Highlight Scout discovery, conversational refinement, deterministic confirmation, Guardian validation, and Razorpay checkout.
 
-What to highlight:
-
-- Scout performs product discovery.
-- The user never needs to know internal product IDs.
-- Closer picks up the purchase context.
-- Guardian verifies the server-side state before payment.
-- Razorpay checkout is generated only after confirmation and validation.
-
-### 2. Context + quantity semantics
-
-Use a compact conversation such as:
+### Context + quantity semantics
 
 > `Do you have a 2TB SSD?`
 >
@@ -140,87 +130,43 @@ Use a compact conversation such as:
 >
 > `Make it 1.`
 
-This demonstrates that conversational references remain tied to the current commerce context and that `ADD` and `SET` are treated as different operations.
+This demonstrates conversation-aware product references and explicit `ADD` vs `SET` quantity behavior.
 
-### 3. Guardian failure path
+### Guardian failure + recovery
 
-Build a basket that exceeds the configured transaction ceiling.
+Build a basket above the configured **₹10,000** ceiling. Guardian blocks the transaction before Razorpay and returns a customer-safe explanation. Reduce the basket and say:
 
-In the current configuration, the maximum transaction value is **₹10,000**.
-
-Guardian blocks the transaction before Razorpay checkout and returns a customer-safe explanation instead of exposing internal policy identifiers.
-
-### 4. Recovery
-
-After the blocked state, modify the basket to bring the total back within the allowed limit and continue.
-
-A representative recovery sequence is:
-
-> `Make it 1.`
->
 > `Proceed.`
 
-The system returns to a valid checkout path instead of getting stuck in a confirmation or payment loop.
+The system returns to a valid checkout path instead of looping or silently retrying a blocked action.
 
 ---
 
 ## Transaction Safety
 
-### Every payment action is server-validated
+MAXX treats the model as an intent layer, not a financial authority.
 
-MAXX does not trust model-generated totals, quantities, prices, or payment identifiers.
+Before Razorpay order creation, the backend re-checks customer/conversation ownership, purchase state, explicit confirmation, basket consistency, current product availability, current inventory, server-calculated totals, and Guardian policy.
 
-Before a Razorpay order is created, the backend re-checks:
-
-- customer / conversation ownership
-- purchase state
-- explicit confirmation
-- basket consistency
-- current product availability
-- current inventory
-- server-calculated subtotal and total
-- configured Guardian policies
-
-### Guardian policy gate
-
-Guardian runs deterministic safety checks before Razorpay interaction. The current configuration requires explicit confirmation and caps a transaction at **₹10,000**.
-
-A blocked action is translated to customer-safe language, keeping implementation details such as rule identifiers inside the backend rather than leaking them into the chat experience.
-
-### Idempotent payment boundary
-
-Razorpay order creation is designed to be idempotent for a purchase intent. If an order already exists for the same intent, MAXX can return the existing checkout state rather than creating a duplicate order.
-
-### Webhook-backed finalization
-
-Payment completion is not assumed from the frontend alone. Razorpay webhooks feed the backend so payment and inventory finalization can be completed from an authoritative server event.
+Razorpay order creation is designed to be idempotent for a purchase intent. Payment completion is finalized from authoritative webhook events, with recovery paths for partial failures.
 
 ---
 
 ## Failure Cases That Were Hardened
 
-> The interesting part of an agentic-commerce system is what happens when something goes wrong.
+**Internal IDs leaked into chat** → customer-facing sanitization removes catalog, recommendation, purchase, and order identifiers.
 
-**1. Internal IDs leaked into chat**  
-Customer-visible responses could contain catalog, recommendation, or order identifiers. MAXX now sanitizes internal identifiers before returning customer-facing text.
+**Guardian implementation details leaked** → internal rule names are translated into customer-safe messages.
 
-**2. Guardian errors exposed implementation details**  
-Raw policy names such as `RULE_01_MAX_TX_LIMIT` are converted into customer-safe explanations.
+**Conversational quantity ambiguity** → `ADD` increments and `SET` replaces the requested quantity.
 
-**3. Conversational quantity ambiguity**  
-Requests such as “give me those 2”, “add another”, and “make it 1” required explicit semantics. MAXX distinguishes `ADD` from `SET` and keeps the basket authoritative in the backend.
+**Payment retry loops** → failed/unknown states use explicit recovery handling rather than blind retries.
 
-**4. Payment retry loops**  
-Failed or unknown payment states could cause blind retries. MAXX routes payment recovery through explicit state handling and avoids treating a previous payment attempt as permission to repeat it indefinitely.
+**Duplicate order creation** → purchase-intent state transitions and idempotent order checks protect the checkout boundary.
 
-**5. Duplicate order creation**  
-Concurrent or repeated checkout actions could create duplicate Razorpay orders. Purchase-intent state transitions and idempotent order checks now guard this boundary.
+**Inventory race conditions** → fulfillment uses atomic inventory handling to reduce TOCTOU risk.
 
-**6. Inventory race conditions**  
-Inventory is decremented atomically during fulfillment instead of trusting the basket-building phase, reducing TOCTOU risk under concurrent orders.
-
-**7. Deployment drift**  
-Cloud Build now explicitly builds, pushes, and deploys the container image so production deployment is tied to the committed source revision.
+**Deployment drift** → Cloud Build explicitly builds, pushes, and deploys the commit-tagged container.
 
 ---
 
@@ -247,13 +193,13 @@ Cloud Build now explicitly builds, pushes, and deploys the container image so pr
 merchant-maxx/
 ├── backend/
 │   ├── agents/
-│   │   ├── maxx.py          # Main LangGraph orchestration + response sanitization
+│   │   ├── maxx.py          # Main LangGraph orchestration + sanitization
 │   │   ├── scout.py         # Product discovery + basket operations
 │   │   ├── booster.py       # Recommendation path
 │   │   ├── merger.py        # Parallel result synchronization
 │   │   ├── closer.py        # Checkout + payment flow
 │   │   ├── guardian.py      # Deterministic safety gate
-│   │   └── tools.py         # Commerce tools and payment boundaries
+│   │   └── tools.py         # Commerce tools + payment boundaries
 │   ├── routes/
 │   │   ├── auth.py          # Registration / authentication
 │   │   ├── chat.py          # Chat + deterministic commerce actions
@@ -261,15 +207,10 @@ merchant-maxx/
 │   │   ├── audit.py         # Audit API
 │   │   └── webhooks.py      # Razorpay webhook processing
 │   ├── middleware/          # Auth, rate limiting, global errors
-│   ├── tests/               # Commerce + concurrency + security tests
+│   ├── tests/               # Commerce, concurrency, security tests
 │   └── main.py              # FastAPI entrypoint
 │
-├── frontend/
-│   └── src/
-│       ├── pages/           # Login, registration, chat, app views
-│       ├── components/      # Commerce UI
-│       └── config.js        # Runtime API URL configuration
-│
+├── frontend/                # React / Vite client
 ├── dataset/                 # Catalog / seed data
 ├── docs/                    # Architecture, commerce, demo, development, security
 ├── cloudbuild.yaml          # Container build → push → Cloud Run deploy
@@ -280,11 +221,9 @@ merchant-maxx/
 
 ## API Surface
 
-The FastAPI application exposes commerce and observability endpoints including:
-
 | Route | Purpose |
 |---|---|
-| `/auth/*` | Registration and authentication flows |
+| `/auth/*` | Registration and authentication |
 | `/catalog/*` | Product catalog access |
 | `/chat` | Natural-language commerce interaction |
 | `/chat/action` | Deterministic cart, checkout, and payment transitions |
@@ -292,8 +231,6 @@ The FastAPI application exposes commerce and observability endpoints including:
 | `/webhooks/*` | Razorpay payment events and fulfillment |
 | `/recommendations/*` | Recommendation-related flows |
 | `/acp/*` | Agentic-commerce protocol surfaces |
-
-The exact route implementations live under `backend/routes/`.
 
 ---
 
@@ -305,10 +242,10 @@ The exact route implementations live under `backend/routes/`.
 - Node.js / npm
 - Supabase project and credentials
 - Pinecone API key
-- An LLM API key for the configured provider
+- LLM API key for the configured provider
 - Razorpay test credentials for payment flows
 
-### 1. Configure environment
+### Configure environment
 
 ```bash
 git clone https://github.com/divy-jn/merchant-maxx.git
@@ -316,9 +253,9 @@ cd merchant-maxx
 cp .env.example .env
 ```
 
-Fill in the environment variables locally. Never commit real credentials.
+Fill in the local environment values. Never commit real credentials.
 
-### 2. Start the backend
+### Start the backend
 
 ```bash
 cd backend
@@ -326,9 +263,7 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
-FastAPI runs on the local backend port expected by the frontend configuration.
-
-### 3. Start the frontend
+### Start the frontend
 
 ```bash
 cd frontend
@@ -336,15 +271,13 @@ npm install
 npm run dev
 ```
 
-The frontend uses `VITE_API_URL` when supplied; otherwise the development configuration points to the local backend.
+The frontend uses `VITE_API_URL` when supplied; otherwise development defaults to the local backend.
 
 ---
 
 ## Environment Configuration
 
 The tracked `.env.example` documents the configuration surface without containing credentials.
-
-Important variables include:
 
 ```text
 LLM_PROVIDER / LLM_MODEL / LLM_API_KEY
@@ -357,8 +290,6 @@ APP_ENV=development
 CORS_ORIGINS=...
 ```
 
-Use real secrets only through local environment configuration or managed secret storage.
-
 ---
 
 ## Testing
@@ -370,18 +301,9 @@ cd backend
 APP_ENV=test python -m pytest tests/ -v
 ```
 
-GitHub Actions runs the same backend test workflow for pushes to `main` and pull requests targeting `main`.
+GitHub Actions runs the backend test workflow for pushes to `main` and pull requests targeting `main`.
 
-### What the suite protects
-
-- payment state transitions
-- Guardian policy enforcement
-- concurrent checkout / inventory behavior
-- cart quantity semantics
-- ownership and authorization boundaries
-- webhook handling
-- customer-safe error handling
-- tool-call and LangGraph execution reliability
+The suite covers payment state transitions, Guardian enforcement, concurrent checkout/inventory behavior, cart quantity semantics, ownership/authorization, webhooks, customer-safe errors, and LangGraph tool execution reliability.
 
 ---
 
@@ -393,9 +315,7 @@ Vercel hosts the React application.
 
 ### Backend
 
-Google Cloud Run hosts the FastAPI container.
-
-`cloudbuild.yaml` performs the production deployment pipeline:
+Google Cloud Run hosts the FastAPI container. `cloudbuild.yaml` performs:
 
 ```text
 Source commit
@@ -415,7 +335,7 @@ The container image is tagged with the commit SHA so the deployed artifact remai
 
 | Document | Purpose |
 |---|---|
-| [Architecture](docs/ARCHITECTURE.md) | System boundaries, agents, services, and deployment topology |
+| [Architecture](docs/ARCHITECTURE.md) | System boundaries, agents, services, deployment topology |
 | [Commerce Flow](docs/COMMERCE_FLOW.md) | Product discovery → basket → Guardian → Razorpay → fulfillment |
 | [Demo Guide](docs/DEMO.md) | Recommended judge/demo walkthrough |
 | [Development](docs/DEVELOPMENT.md) | Local development and deployment workflow |
