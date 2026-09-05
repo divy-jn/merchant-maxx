@@ -76,10 +76,11 @@ def closer_node(state: dict):
         ctx = state.get("purchase_context") or {}
         basket = ctx.get("basket_items", [])
         amount = ctx.get("amount_paise", 0)
+        pending_action = {"type": "checkout", "label": "Proceed to Checkout"}
         if basket:
             item_str = "1 item" if len(basket) == 1 else f"{len(basket)} items"
-            return {"messages": [AIMessage(content=f"Your cart contains {item_str}. Total: Rs.{amount/100:,.2f}.\n\nWould you like to proceed to checkout? Just say **\"yes\"** or **\"confirm\"** to place your order.")]}
-        return {"messages": [AIMessage(content="Your cart is ready. Would you like to proceed to checkout?")]}
+            return {"messages": [AIMessage(content=f"Your cart contains {item_str}. Total: Rs.{amount/100:,.2f}.\n\nWould you like to proceed to checkout? Just say **\"yes\"** or **\"confirm\"** to place your order.")], "pending_action": pending_action}
+        return {"messages": [AIMessage(content="Your cart is ready. Would you like to proceed to checkout?")], "pending_action": pending_action}
 
     messages.insert(0, SystemMessage(content=closer_prompt))
     state_view = SystemMessage(content=(

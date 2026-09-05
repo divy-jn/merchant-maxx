@@ -52,6 +52,8 @@ def booster_node(state: dict):
             # Check if recommendations were actually fetched
             has_rec = any("Data-backed recommendations:" in str(m.content) for m in messages if getattr(m, "name", None) == "fetch_recommendations")
             state_update["booster_result"]["recommendations_shown"] = has_rec
+            if has_rec:
+                state_update["pending_action"] = {"type": "accept_recommendation", "label": "Add to Cart"}
         
         state_update["booster_end"] = time.time()
         return state_update

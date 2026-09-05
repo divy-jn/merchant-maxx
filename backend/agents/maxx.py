@@ -48,8 +48,19 @@ _INTERNAL_ID_PATTERNS = (
 def sanitize_customer_text(text: str) -> str:
     """Remove internal catalog, recommendation, purchase-intent, and local-order identifiers from customer-visible text."""
     sanitized = str(text or "")
-    for pattern in _INTERNAL_ID_PATTERNS:
-        sanitized = pattern.sub(" ", sanitized)
+
+    # Translate Guardian rules into customer-safe language
+    if "RULE_01_MAX_TX_LIMIT" in sanitized:
+        return "I'm sorry, but this purchase exceeds the maximum allowed transaction limit of ₹10,000. Please reduce your cart total to proceed."
+    if "RULE_02_MAX_QTY_LIMIT" in sanitized:
+        return "I'm sorry, but you have exceeded the maximum allowed quantity per item. Please reduce the quantity to proceed."
+    if "RULE_03_MAX_ITEMS_LIMIT" in sanitized:
+        return "I'm sorry, but you have exceeded the maximum number of items allowed in a single order."
+    if "GuardianException" in sanitized:
+        return "Your purchase cannot be processed at this time due to our security policies. Please review your cart and try again."
+
+    for p in _INTERNAL_ID_PATTERNS:
+        sanitized = p.sub(" ", sanitized)
     sanitized = re.sub(r"[ \t]{2,}", " ", sanitized)
     sanitized = re.sub(r"\n[ \t]+", "\n", sanitized)
     return sanitized.strip()

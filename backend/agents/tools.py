@@ -56,11 +56,12 @@ def get_product_details(item_id: str):
         return "Unable to fetch product details at this time."
 
 @tool
-def stage_purchase_intent(product_id: str, quantity: int = 1) -> str:
+def stage_purchase_intent(product_id: str, quantity: int = 1, operation: str = "add") -> str:
     """Stage a product for checkout, add to cart, or modify quantity. This never authorizes payment. 
     Set quantity=0 to remove the product from the basket.
-    Pass the requested quantity if specified."""
-    return f"Success: the cart has been updated with {quantity}x {product_id}."
+    Pass the requested quantity if specified.
+    operation can be 'add' (to add to existing quantity) or 'set' (to override existing quantity)."""
+    return f"Success: the cart has been updated with {quantity}x {product_id} ({operation})."
 
 @tool
 def fetch_recommendations(state: Annotated[dict, InjectedState], customer_id: str = None, category: str = None) -> str:
@@ -287,7 +288,8 @@ def create_razorpay_order(state: Annotated[dict, InjectedState], customer_email:
                 f"Please click **Pay Now** to complete your purchase securely.")
     except GuardianException as exc:
         try:
-            supabase.table("purchase_intents").update({"purchase_state": "USER_CONFIRMED"}).eq("purchase_intent_id", intent_id).eq("purchase_state", "ORDER_CREATING").execute()
+            # Revert to PURCHASE_PENDING to prevent infinite checkout loop
+            supabase.table("purchase_intents").update({"purchase_state": "PURCHASE_PENDING", "user_confirmed": False}).eq("purchase_intent_id", intent_id).eq("purchase_state", "ORDER_CREATING").execute()
         except Exception:
             pass
         return f"Order blocked by Guardian: {exc}"

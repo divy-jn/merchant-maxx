@@ -24,6 +24,8 @@ CRITICAL BEHAVIOR RULES:
 9. State Consistency: Do not contradict the "Current Cart" provided in the system prompt. Never authorize payment, generate payment links, or hallucinate a completed order.
 10. No IDs in prose: Product IDs are implementation details used only for tool calls. They must never appear in your final response, even if a tool returned them.
 11. Unavailable Products: If you cannot find a product in the catalog, you MUST explicitly state it using a variation of this EXACT phrasing: "I couldn't find a suitable [requested item] in the catalog." Then, offer a relevant alternative and ask if they want you to search for it. Do NOT give generic encyclopedic explanations.
+27. Quantity Handling: You have a tool argument `operation`. Use `operation="add"` for relative additions ("add another", "one more"). Use `operation="set"` for absolute assignments ("make it two", "give me 3").
+28. Product References: When the user says "give me those two" or "that one", resolve it to the most recently discussed product ID from your history.
 
 Examples:
 User: "Recommend me a mouse."
@@ -74,18 +76,18 @@ def scout_node(state: dict):
     import time
     state_update = {"scout_start": time.time()}
     messages = list(state.get("messages", []))
-    
+
     ctx = state.get("purchase_context", {})
     basket = ctx.get("basket_items", [])
     basket_str = "Current Cart: " + ", ".join([f"{item.get('quantity', 1)}x {item['product_id']}" for item in basket]) if basket else "Current Cart: Empty"
-    
+
     sys_msg = scout_prompt + "\n\n" + basket_str
-    
+
     if not messages or not getattr(messages[0], "content", "").startswith("You are MAXX"):
         messages.insert(0, SystemMessage(content=sys_msg))
     else:
         messages[0] = SystemMessage(content=sys_msg)
-        
+
     from langchain_core.messages import merge_message_runs
     messages_to_invoke = merge_message_runs(messages)
     response = get_llm().bind_tools(SCOUT_TOOLS).invoke(messages_to_invoke)
@@ -118,20 +120,26 @@ def scout_node(state: dict):
             logger.warning("Scout tried to stage product %s not found in conversation history %s — blocking",
                            product_id, known_ids)
             continue
-            
+
         # ── Quantity validation ──
+        operation = tc["args"].get("operation", "set")
         try:
             quantity = int(tc["args"].get("quantity", 1))
         except (ValueError, TypeError):
             quantity = 1
-            
+
         if quantity < 0:
             logger.warning("Scout invalid negative quantity — ignoring")
             continue
-        elif quantity > MAX_QUANTITY:
-            quantity = MAX_QUANTITY
 
         existing_item_idx = next((i for i, item in enumerate(basket_items) if item.get("product_id") == product_id), -1)
+
+        if operation == "add":
+            if existing_item_idx != -1:
+                quantity = basket_items[existing_item_idx]["quantity"] + quantity
+
+        if quantity > MAX_QUANTITY:
+            quantity = MAX_QUANTITY
 
         from utils.supabase_client import supabase
         if quantity == 0:
@@ -152,7 +160,7 @@ def scout_node(state: dict):
             if not product or not product.get("active") or (product.get("inventory_qty") or 0) < quantity:
                 logger.warning("Scout invalid quantity/product %s — ignoring", product_id)
                 continue
-                
+
             if existing_item_idx != -1:
                 basket_items[existing_item_idx]["quantity"] = quantity
             else:
@@ -160,7 +168,7 @@ def scout_node(state: dict):
 
         if not intent_id:
             intent_id = f"pi_{uuid.uuid4().hex[:12]}"
-            
+
         # ── Server-side authoritative amount calculation ──
         total_amount = 0
         valid_basket = []
@@ -183,7 +191,7 @@ def scout_node(state: dict):
             "amount_paise": total_amount,
             "intent_description": f"Purchase intent for {sum(item['quantity'] for item in basket_items)} items"
         }
-        
+
         if supabase:
             try:
                 mutation_success = False
@@ -199,7 +207,7 @@ def scout_node(state: dict):
                         "confirmed_amount_paise": None,
                         "confirmation_timestamp": None
                     }).eq("purchase_intent_id", intent_id).is_("razorpay_order_id", "null").in_("purchase_state", ["IDLE", "PRODUCT_SELECTED", "RECOMMENDATION_SHOWN", "PURCHASE_PENDING", "USER_CONFIRMED", "PAYMENT_FAILED", "PAYMENT_UNKNOWN", "RECOVERY_PENDING"]).execute()
-                    
+
                     if res and res.data and len(res.data) == 1:
                         mutation_success = True
 
@@ -207,7 +215,7 @@ def scout_node(state: dict):
                     new_intent_id = f"pi_{uuid.uuid4().hex[:12]}"
                     intent_id = new_intent_id
                     ctx["purchase_intent_id"] = intent_id
-                    
+
                     supabase.table("purchase_intents").insert({
                         "purchase_intent_id": intent_id,
                         "conversation_id": state.get("session_id"),
