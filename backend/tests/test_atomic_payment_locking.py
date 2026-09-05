@@ -97,14 +97,14 @@ def test_toctou_race_condition(monkeypatch):
 
     closer_result = []
     def closer_thread():
-        state = {"session_id": conv_id, "purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "purchase_state": "USER_CONFIRMED", "use[...": True}
+        state = {"session_id": conv_id, "purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "purchase_state": "USER_CONFIRMED", "user_confirmed": True}
         res = create_razorpay_order.invoke({"state": state})
         closer_result.append(res)
 
     scout_result = []
     def scout_thread():
         time.sleep(0.3) # Wait for closer to reserve the intent
-        state = {"purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "session_id": conv_id, "messages": [ToolMessage(content="Pro[...")], "use[...]": True}
+        state = {"purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "session_id": conv_id, "messages": [ToolMessage(content="Product ID: item_mouse", tool_call_id="call_1")]}
         scout_node(state)
         scout_result.append(True)
 
@@ -132,7 +132,7 @@ def test_toctou_race_condition(monkeypatch):
 def test_normal_unlocked_basket_mutation(monkeypatch):
     monkeypatch.setattr(agents.scout, "get_llm", lambda: MockLLM())
     intent_id, conv_id = setup_intent("PRODUCT_SELECTED")
-    state = {"purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "session_id": conv_id, "messages": [ToolMessage(content="Product[...")], "use[...]": True}
+    state = {"purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "session_id": conv_id, "messages": [ToolMessage(content="Product ID: item_mouse", tool_call_id="call_1")]}
     scout_node(state)
     intent = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent_id).execute().data[0]
     assert len(intent.get("basket", [])) == 2
@@ -140,7 +140,7 @@ def test_normal_unlocked_basket_mutation(monkeypatch):
 def test_locked_intent_mutation_creates_clone(monkeypatch):
     monkeypatch.setattr(agents.scout, "get_llm", lambda: MockLLM())
     intent_id, conv_id = setup_intent("PAYMENT_PENDING", razorpay_order_id="order_123")
-    state = {"purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "session_id": conv_id, "messages": [ToolMessage(content="Produc[...")], "use[...]": True}
+    state = {"purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "session_id": conv_id, "messages": [ToolMessage(content="Product ID: item_mouse", tool_call_id="call_1")]}
     scout_node(state)
 
     intent = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent_id).execute().data[0]
@@ -160,7 +160,7 @@ def test_razorpay_api_failure_does_not_corrupt(monkeypatch):
     import agents.guardian
     monkeypatch.setattr(agents.guardian, "validate_action", lambda *a, **k: None)
 
-    state = {"session_id": conv_id, "purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "purchase_state": "USER_CONFIRMED", "use[...": True}
+    state = {"session_id": conv_id, "purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "purchase_state": "USER_CONFIRMED", "user_confirmed": True}
     res = create_razorpay_order.invoke({"state": state})
 
     intent = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent_id).execute().data[0]
@@ -171,7 +171,7 @@ def test_razorpay_api_failure_does_not_corrupt(monkeypatch):
 def test_terminal_payment_success_cannot_be_mutated(monkeypatch):
     monkeypatch.setattr(agents.scout, "get_llm", lambda: MockLLM())
     intent_id, conv_id = setup_intent("PAYMENT_SUCCESS", razorpay_order_id="order_xyz")
-    state = {"purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "session_id": conv_id, "messages": [ToolMessage(content="Produc[...")], "use[...]": True}
+    state = {"purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "session_id": conv_id, "messages": [ToolMessage(content="Product ID: item_mouse", tool_call_id="call_1")]}
     scout_node(state)
 
     intent = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent_id).execute().data[0]
