@@ -24,8 +24,8 @@ CRITICAL BEHAVIOR RULES:
 9. State Consistency: Do not contradict the "Current Cart" provided in the system prompt. Never authorize payment, generate payment links, or hallucinate a completed order.
 10. No IDs in prose: Product IDs are implementation details used only for tool calls. They must never appear in your final response, even if a tool returned them.
 11. Unavailable Products: If you cannot find a product in the catalog, you MUST explicitly state it using a variation of this EXACT phrasing: "I couldn't find a suitable [requested item] in the catalog." Then, offer a relevant alternative and ask if they want you to search for it. Do NOT give generic encyclopedic explanations.
-27. Quantity Handling: You have a tool argument `operation`. Use `operation="add"` for relative additions ("add another", "one more"). Use `operation="set"` for absolute assignments ("make it two", "give me 3").
-28. Product References: When the user says "give me those two" or "that one", resolve it to the most recently discussed product ID from your history.
+27. Quantity Handling: You have a tool argument `operation`. Use `operation="add"` for relative additions ("add another", "one more"). Use `operation="set"` for absolute assignments ("make it two", "give me 3", "give those 2").
+28. Product References — CRITICAL: When the user says "give those 2", "give me those 2", "I'll take those 2", or any phrase like "those/these/that N" where N is a number, it ALWAYS means quantity=N of the SINGLE most recently discussed product. It NEVER means "N different products". You must call stage_purchase_intent ONCE with the most recently discussed product_id and quantity=N, operation="set". Example: if you just discussed Portable SSD 1TB and the user says "ok give those 2", call stage_purchase_intent(product_id=<SSD id>, quantity=2, operation="set"). Do NOT add a second unrelated product.
 
 Examples:
 User: "Recommend me a mouse."
@@ -106,6 +106,25 @@ def scout_node(state: dict):
     existing_ctx = state.get("purchase_context") or {}
     intent_id = existing_ctx.get("purchase_intent_id")
     basket_items = list(existing_ctx.get("basket_items") or [])
+    # ── Server-side "those N" guard (runs once before iteration) ──
+    # If the user said "those 2" / "these 3" etc., and the LLM emitted multiple
+    # stage_purchase_intent calls each with qty=1, collapse into one call with qty=N.
+    all_stage_calls = [t for t in (getattr(response, "tool_calls", []) or []) if t.get("name") == "stage_purchase_intent"]
+    if len(all_stage_calls) > 1:
+        user_text = ""
+        for m in reversed(messages):
+            if getattr(m, "type", "") == "human" or isinstance(m, HumanMessage):
+                user_text = str(getattr(m, "content", "")).lower().strip()
+                break
+        those_match = re.search(r"\b(?:those|these|that)\s+(\d+)\b", user_text)
+        if those_match:
+            requested_qty = int(those_match.group(1))
+            if all(int(t["args"].get("quantity", 1)) == 1 for t in all_stage_calls):
+                first_call = all_stage_calls[0]
+                first_call["args"]["quantity"] = requested_qty
+                first_call["args"]["operation"] = "set"
+                response.tool_calls = [t for t in response.tool_calls if t.get("name") != "stage_purchase_intent" or t is first_call]
+                logger.info("Collapsed %d stage_purchase_intent calls into 1 with qty=%d (those-N guard)", len(all_stage_calls), requested_qty)
 
     for tc in getattr(response, "tool_calls", []) or []:
         if tc["name"] != "stage_purchase_intent":

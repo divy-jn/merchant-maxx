@@ -189,3 +189,29 @@ def test_multiple_products_one_turn(mock_db):
         assert basket[0]["product_id"] == "item_lenovo"
         assert basket[1]["product_id"] == "item_mouse"
         assert ctx["amount_paise"] == 5100000
+
+def test_those_n_collapses_to_quantity(mock_db):
+    """'ok give those 2' must NOT add two different products.
+    The server-side guard collapses multiple qty=1 calls into one call with qty=N."""
+    tc = [
+        {"name": "stage_purchase_intent", "args": {"product_id": "item_lenovo", "quantity": 1}, "id": "call_1"},
+        {"name": "stage_purchase_intent", "args": {"product_id": "item_mouse", "quantity": 1}, "id": "call_2"}
+    ]
+
+    with patch("agents.scout.get_llm") as mock_llm, \
+         patch("agents.scout._extract_product_ids_from_history", return_value={"item_lenovo", "item_mouse"}):
+        mock_inst = MagicMock()
+        mock_inst.invoke.return_value = AIMessage(content="", tool_calls=tc)
+        mock_llm.return_value.bind_tools.return_value = mock_inst
+
+        state = {
+            "messages": [SystemMessage(content="SYS"), HumanMessage(content="ok give those 2")],
+        }
+
+        res = scout_node(state)
+        ctx = res.get("scout_result", {}).get("product_context", {})
+        basket = ctx.get("basket_items", [])
+
+        # Guard must collapse into 1 item with qty=2
+        assert len(basket) == 1, f"Expected 1 item but got {len(basket)}: {basket}"
+        assert basket[0]["quantity"] == 2, f"Expected qty=2 but got {basket[0]['quantity']}"
