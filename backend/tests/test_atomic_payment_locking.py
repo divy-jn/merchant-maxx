@@ -50,11 +50,11 @@ def test_toctou_race_condition(monkeypatch):
     intent_id, conv_id = setup_intent()
 
     def mock_create_order(*args, **kwargs):
-        time.sleep(1) # Simulated network delay
-        return {"id": f"order_{uuid.uuid4().hex[:12]}"}
+        time.sleep(0.5) # Simulated network delay
+        return {"id": "order_test_toctou"}
 
-    import razorpay_service.orders
-    monkeypatch.setattr(razorpay_service.orders, "create_order", mock_create_order)
+    monkeypatch.setattr("razorpay_service.orders.create_order", mock_create_order)
+
     import agents.guardian
     monkeypatch.setattr(agents.guardian, "validate_action", lambda *a, **k: None)
     monkeypatch.setattr(agents.scout, "get_llm", lambda: MockLLM())
@@ -64,7 +64,7 @@ def test_toctou_race_condition(monkeypatch):
         state = {"session_id": conv_id, "purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "purchase_state": "USER_CONFIRMED", "user_confirmed": True}
         res = create_razorpay_order.invoke({"state": state})
         closer_result.append(res)
-        
+
     scout_result = []
     def scout_thread():
         time.sleep(0.3) # Wait for closer to reserve the intent
@@ -78,9 +78,9 @@ def test_toctou_race_condition(monkeypatch):
     t2.start()
     t1.join()
     t2.join()
-    
+
     intent = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent_id).execute().data[0]
-    
+
     # Assert that the old intent was NOT mutated (basket size 1, has order ID)
     assert len(intent.get("basket", [])) == 1
     assert intent.get("razorpay_order_id") is not None
@@ -106,10 +106,10 @@ def test_locked_intent_mutation_creates_clone(monkeypatch):
     intent_id, conv_id = setup_intent("PAYMENT_PENDING", razorpay_order_id="order_123")
     state = {"purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "session_id": conv_id, "messages": [ToolMessage(content="Product ID: item_mouse", tool_call_id="call_0")]}
     scout_node(state)
-    
+
     intent = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent_id).execute().data[0]
     assert len(intent.get("basket", [])) == 1 # Old unmodified
-    
+
     new_intents = supabase.table("purchase_intents").select("*").eq("conversation_id", conv_id).neq("purchase_intent_id", intent_id).execute().data
     assert len(new_intents) == 1
     assert len(new_intents[0].get("basket", [])) == 2 # New modified
@@ -126,7 +126,7 @@ def test_razorpay_api_failure_does_not_corrupt(monkeypatch):
 
     state = {"session_id": conv_id, "purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "purchase_state": "USER_CONFIRMED", "user_confirmed": True}
     res = create_razorpay_order.invoke({"state": state})
-    
+
     intent = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent_id).execute().data[0]
     # State should revert to USER_CONFIRMED since Razorpay failed
     assert intent.get("purchase_state") == "USER_CONFIRMED"
@@ -137,7 +137,7 @@ def test_terminal_payment_success_cannot_be_mutated(monkeypatch):
     intent_id, conv_id = setup_intent("PAYMENT_SUCCESS", razorpay_order_id="order_xyz")
     state = {"purchase_context": {"purchase_intent_id": intent_id, "basket_items": [{"product_id": "item_laptop", "quantity": 1}]}, "session_id": conv_id, "messages": [ToolMessage(content="Product ID: item_mouse", tool_call_id="call_0")]}
     scout_node(state)
-    
+
     intent = supabase.table("purchase_intents").select("*").eq("purchase_intent_id", intent_id).execute().data[0]
     assert len(intent.get("basket", [])) == 1
     assert intent.get("purchase_state") == "PAYMENT_SUCCESS"
